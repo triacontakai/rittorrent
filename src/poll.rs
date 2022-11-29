@@ -89,6 +89,10 @@ mod event {
             }
         }
 
+        pub fn len(&self) -> usize {
+            self.num_events
+        }
+
         pub fn capacity(&self) -> usize {
             self.vec.len()
         }
@@ -172,7 +176,7 @@ impl Poll {
     }
 
     pub fn poll(&mut self, events: &mut Events, timeout: Option<Duration>) -> Result<()> {
-        let timeout = timeout.map(|t| t.as_secs() as i32).unwrap_or(-1);
+        let timeout = timeout.map(|t| t.as_millis() as i32).unwrap_or(-1);
 
         // Safety: events lives past this call, and events.capacity() ensures no OOB
         let num_events = unsafe {

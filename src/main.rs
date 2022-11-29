@@ -1,7 +1,7 @@
 mod helpers;
 mod poll;
 
-use std::{io, net::TcpListener};
+use std::{io, net::TcpListener, time::Duration};
 
 use anyhow::Result;
 use poll::{Events, Interest, Poll, Token};
@@ -21,7 +21,9 @@ fn main() -> Result<()> {
     let mut events = Events::with_capacity(20);
 
     loop {
-        poll.poll(&mut events, None)?;
+        poll.poll(&mut events, Some(Duration::from_secs(3)))?;
+
+        println!("woke up from poll with {} events", events.len());
 
         for event in events.iter() {
             match event.token() {
