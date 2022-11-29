@@ -49,7 +49,7 @@ mod event {
     use super::Token;
 
     /// Friendlier version of [libc::epoll_event]
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug)]
     pub struct Event {
         token: Token,
         flags: u32,
