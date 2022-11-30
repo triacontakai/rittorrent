@@ -1,4 +1,4 @@
-/// Safe wrapper around `libc::strerror_r`
+/// Safe wrapper around [libc::strerror_r]
 pub fn strerror() -> String {
     // Safety: __errno_location will never fail
     let errno = unsafe { *libc::__errno_location() };
