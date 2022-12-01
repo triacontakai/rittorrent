@@ -19,6 +19,11 @@
     \tableofcontents
 
     \clearpage
+    \section{Contributions}
+
+    Andrei and Ryan sat down and wrote this report together, and both understand all of the components listed and their responsibilities.
+    It wouldn't really be fair to say that one person worked more or less on the report; the whole thing was done collaboratively.
+
     \section{Components}
 
     \subsection{Argument Parsing}
@@ -51,6 +56,17 @@
     The main thread will spawn one thread for each connection with another peer.
     Each of these threads will be able to perform \emph{blocking} I/O, and send/receive instructions with the main thread using channels (\texttt{std::sync::mpsc} for multi-producer, single-consumer queues).
 
+    The main thread will be able to destroy threads, disconnecting peers.
+    It can also create threads, creating peer connections.
+    The tracker thread will remain static throughout the lifetime of the program; if it ever exits, this is considered an error and the program will panic.
+    There will also be a similar thread dedicated to accepting new connections and passing them to the main thread using the channel.
+    In addition, there will be a thread dedicated to handling periodic timers (like when to update choking/unchoking, tracker interval, etc).
+
+    We plan to work on this together, having the above done by the Dec. 5th check-in.
+    However, we are considering another slightly-tweaked architecture, where each peer thread polls on the fd it's responsible for and an eventfd.
+    When we send a request to the thread that needs immediate attention, we can send an event to the eventfd, waking poll immediately.
+    In this case the I/O would actually be non-blocking.
+
     \subsection{File I/O}
 
     The core of our file I/O interface will be the \verb|Piece| struct.
@@ -79,9 +95,13 @@
             fn is_complete(&self) -> bool;
         }
     \end{verbatim}
+    Ryan will finish the file I/O component by December 5th.
 
     \subsection{Message Encoding \& Decoding}
 
+    We plan to message encoding/decoding using the \texttt{serde} and \texttt{bendy} Rust crates.
+    We will need to manually implement the peer protocol payload parsing (although the id and length will be handled and stripped by the peer threads).
+    The API will look something like this:
     \begin{verbatim}
         const SHA1_LENGTH: usize = 20;
 
@@ -97,7 +117,14 @@
         impl Torrent {
             fn from_bytes(bytes: &[u8]) -> Self;
         }
+
+        impl TrackerResponse {
+            fn from_bytes(bytes: &[u8]) -> Self;
+        }
+
+        // peer responses, corresponding to each peer request below
     \end{verbatim}
+    Andrei will finish this component by Dec 5th.
 
     \subsection{HTTP/1.1 Client}
 
@@ -115,6 +142,8 @@
             -> Result<HttpResponse, HttpError>;
     \end{verbatim}
     Since we're using threads, it's okay for \texttt{http\_get()} to block.
+
+    Andrei will do this component by Dec. 5th.
 
 
     \subsection{Tracker Interaction}
@@ -146,9 +175,109 @@
             fn send(&self, dest: impl ToSockAddrs) -> TrackerResponse;
         }
     \end{verbatim}
+    The main thread will periodically construct TrackerRequests and send them to the tracker thread over the channel.
+    The tracker thread will then send it over the network, block until it receives a response, and then send the TrackerResponse over the channel to the main thread.
+    The main thread will use the peer list returned in the TrackerResponse to update its peer list, connecting to/disconnecting from peers (and creating/destroying the appropriate threads) to maintain the maximum connection limit.
 
+    See below for the \texttt{Peer} type.
+
+    Ryan will have this component done by Dec. 5th.
 
     \subsection{Peer Protocol}
+
+    \begin{verbatim}
+        struct Peer {
+            // basic info
+            ip: IpAddr,
+            port: u16,
+
+            // game theory
+            am_choking: bool,
+            am_interested: bool,
+            peer_choking: bool,
+            peer_interesting: bool,
+            bytes_sent: u64,
+            bytes_received: u64,
+            start_time: std::time::Instant,
+            bitmap: BitVec<usize, Msb0>,
+            when_joined: std::time::Instant,
+        }
+
+        enum PeerRequest {
+            Choke,
+            Unchoke,
+            Interested,
+            NotInterested,
+            Have(u32),
+            Request(u32, u32, u32),
+            Cancel(u32, u32, u32),
+            PeerInfo, // not actually sent over the net
+        }
+    \end{verbatim}
+    At the start of the program, the main thread will wait for the tracker thread to receive a set of peers.
+    It will then create threads, passing them a Peer struct over the channel.
+    After this, it can send PeerRequests to each thread, after which the thread will send the appropriate request over the network.
+    The exception to this is the \texttt{PeerInfo} request, which will cause the receiving thread to send the main thread statistics which it can use for game theory decisions (see below).
+    The PeerRequests will have an associated PeerResponse sent over the channel.
+
+    This is a very large component that is core to the program, so Andrei and Ryan will both work on this together.
+    Our aim is to have this done by Dec. 5th (although to have it fully working by then is probably optimistic).
+
+    \subsection{Game Theory}
+
+    The first part of the game theory component is the part that will decide which peers to choke and which peers to unchoke based on their actual performance.
+    The next part will do optimistic unchoking, so that all peers are eventually discovered.
+    Finally, part of the game theory component will be dedicated to picking which pieces we should request from which peers.
+
+    This is a little bit less concrete at this point than the other interfaces, so we don't know exactly what the functions will look like yet.
+    It is likely that we will have traits such as \texttt{ChokeStrategy}, \texttt{PieceStrategy}, and so on that can be implemented by all of the different strategies that we choose to implement, allowing them to be switched out easily.
+    Those implementing these traits will have functions like \texttt{should\_choke()}, \texttt{which\_piece()}, etc.
+
+    For example, Top-4 can be implemented as a \texttt{ChokeStrategy}, and rarest-first can be implemented as a \texttt{PieceStrategy}.
+
+    An important note is that all of this will be performed by the main thread.
+    It will coordinate obtaining information about all of the peers and sending it to the game theory component, then instructing all of the peer threads to send requests appropriately.
+
+    Like the peer protocol, this is a deeply interconnected with the others component, so Andrei and Ryan will do this together.
+    We won't aim to have all of this done by Dec. 5th; instead, let's say Dec. 10th.
+
+    \section{Testing}
+    
+    \subsection{General}
+
+    We will do most of our testing using the Rust/Cargo built-in testing suite, including a \texttt{mod test} in each file and using the \texttt{\#[cfg(test)]} and \texttt{\#[test]} macros.
+    This will be used for unit tests.
+
+    \subsection{Argument Parsing}
+
+    This doesn't need to be thoroughly tested because almost all of the logic here is delegated to the \texttt{clap} crate.
+
+    \subsection{Multithreaded Architecture}
+
+    This will mainly be tested in practice.
+    Some possible unit tests could spin up threads and test our channel communication strategy.
+
+    \subsection{File I/O}
+
+    We will write unit tests, passing fake blocks and constructing fake pieces, ensuring that each function returns the correct result (for example, the requested ranges and bitmaps are correct).
+    Also, we should try this for very large files to ensure that any buffering is efficient.
+    We could even make a mock file (using something that implements Seek and Write) instead of a real file, so that the tests are more reliable.
+
+    \subsection{Message Encoding \& Decoding}
+
+    We will construct a number of bencode test cases, and write unit tests that make sure our encoding and decoding construct the correct serialization and deserialization of various data.
+
+    \subsection{HTTP/1.1 Client + Tracker Interaction}
+
+    We will write some unit tests that send requests to various public trackers, parse the responses, and verifies that the resulting data structures are correct.
+    This will test both the HTTP/1.1 client and the tracker request/response parsing components.
+
+    \subsection{Peer Protocol + Game Theory}
+
+    As with the threading, this is very difficult to write proper unit tests for.
+    Instead, we will inspect manually and in practice; for example, we will inspect transcripts of our peer protocol using a tool like Wireshark to ensure that the correct data is being sent over the wire.
+    We can also measure performance of the various game theory strategies that we implement (using a common large torrent file) to compare them (definitely legal Linux ISOs only).
+    We will also compare to commonly available torrent clients such as Transmission and Deluge.
 
     \clearpage
     \appendix
