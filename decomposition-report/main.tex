@@ -1,7 +1,8 @@
-\documentclass[12pt]{article}
+\documentclass{article}
 
-\usepackage[letterpaper]{geometry}
-\usepackage{lipsum}
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage{appendix}
+\usepackage{multicol}
 
 \title{BitTorrent Decomposition Document}
 \author{Ryan El Kochta\\
@@ -15,15 +16,154 @@
 \begin{document}
 
     \maketitle
+    \tableofcontents
 
+    \clearpage
     \section{Components}
 
     \subsection{Argument Parsing}
-    \subsection{Flie I/O}
+
+    Our BitTorrent client will be a command-line program.
+    The user will configure the client using arguments.
+    Currently we plan to implement the following arguments:
+    \begin{center}
+    \begin{tabular}{r l}
+        \verb|-t, --torrent|:&         torrent file to download \\
+        \verb|-c, --max-connections|:& maximum number of peer connections, \\
+        & defaults to 10 \\
+        \verb|-p, --port|:&            listening port, \\
+        & defaults to random \\
+        \verb|-t, --tracker-type|:&    force tracker type. \verb|http| or \verb|udp| \\
+        \verb|-d, --directory|:&       output directory, \\
+        & defaults to current directory \\
+        \verb|-b, --bittyrant|:&       enable BitTyrant mode
+    \end{tabular}
+    \end{center}
+    Argument parsing will be done using the \verb|clap| crate.
+    The \verb|Args| struct will contain fields for every option, and its method \verb|Args::get()| will lazily parse the arguments and return a reference to them.
+    We expect to use this interface throughout the code.
+
+    Andrei and Ryan will aim to have this portion of the code done by December 5th.
+
+   \subsection{Multithreaded Architecture}
+
+    Our client will be architected as follows: the main thread will actually maintain the download state (which blocks we've received, all of our peers, etc).
+    The main thread will spawn one thread for each connection with another peer.
+    Each of these threads will be able to perform \emph{blocking} I/O, and send/receive instructions with the main thread using channels (\texttt{std::sync::mpsc} for multi-producer, single-consumer queues).
+
+    \subsection{File I/O}
+
+    The core of our file I/O interface will be the \verb|Piece| struct.
+    A \verb|Piece| will have a range of bytes in the output file that the piece represents, along with a SHA-1 hasher.
+    We will also have a \verb|DownloadFile| struct, which will maintain a list of pieces, a bitmap specifying which pieces have been fully received, and the correct SHA-1 hash of the piece.
+    
+    The main loop, upon receiving a block from a peer, will call \texttt{Piece::process\_block()}, which will add it to the appropriate buffer and incrementally compute the SHA-1 hash of the piece.
+    \verb|DownloadFile::piece_bitset()| will also be exposed so that the later game-theoretic components can decide which pieces to request according to their own logic.
+    Other components will also use \texttt{Piece::remaining\_range()} to decide which pieces to request from other peers.
+
+    Once \verb|Piece::process_block()| fills in the last block, it will compute its SHA-1 hash and compare it.
+
+    For convenience, outside components can call \verb|DownloadFile::is_complete()| to see if we have the entire file.
+
+    \begin{verbatim}
+        impl Piece {
+            fn process_block(&mut self, buf: &[u8], offset: usize);
+            fn remaining_range(&self) -> Range<usize>;
+        }
+
+        impl DownloadFile {
+            fn piece(&self, i: usize) -> &Piece;
+            fn piece_mut(&mut self, i: usize) -> &mut Piece;
+
+            fn piece_bitset(&self) -> &BitSlice<usize, Msb0>;
+            fn is_complete(&self) -> bool;
+        }
+    \end{verbatim}
+
     \subsection{Message Encoding \& Decoding}
+
+    \begin{verbatim}
+        const SHA1_LENGTH: usize = 20;
+
+        struct Torrent {
+            announce: String,
+            name: String,
+            length: usize,
+            piece_length: usize,
+            piece_hashes: Vec<[u8; SHA1_LENGTH]>,
+            info_hash: [u8; SHA1_LENGTH],
+        }
+
+        impl Torrent {
+            fn from_bytes(bytes: &[u8]) -> Self;
+        }
+    \end{verbatim}
+
     \subsection{HTTP/1.1 Client}
+
+    Our HTTP/1.1 client wlil be very simple, supporting only one operation: sending a GET request and receiving a response.
+    The API is fairly self-documenting:
+
+    \begin{verbatim}
+        struct HttpResponse {
+            status: u32,
+            content: Vec<u8>,
+            headers: HashMap<String, String>,
+        }
+
+        fn http_get(url: String, parameters: HashMap<String, String>)
+            -> Result<HttpResponse, HttpError>;
+    \end{verbatim}
+    Since we're using threads, it's okay for \texttt{http\_get()} to block.
+
+
     \subsection{Tracker Interaction}
-    \subsection{Event Loop}
+
+    \begin{verbatim}
+        enum TrackerRequestEvent {
+            Started,
+            Completed,
+            Stopped,
+        }
+
+        struct TrackerRequest {
+            info_hash: &[u8],
+            peer_id: String,
+            ip: Option<IpAddr>,
+            port: u16,
+            uploaded: usize,
+            downloaded: usize,
+            left: usize,
+            event: Option<TrackerRequestEvent>,
+        }
+
+        enum TrackerResponse {
+            Success(u32, Vec<Peer>),
+            Error(String),
+        }
+
+        impl TrackerRequest {
+            fn send(&self, dest: impl ToSockAddrs) -> TrackerResponse;
+        }
+    \end{verbatim}
+
+
     \subsection{Peer Protocol}
+
+    \clearpage
+    \appendix
+    \section{Libraries Used}
+
+    We currently plan to use the following libraries:
+    \begin{multicols}{2}
+    \begin{enumerate}
+        \item \verb|clap|
+        \item \verb|libc|
+        \item \verb|bitvec|
+        \item \verb|serde|
+        \item \verb|bendy|
+        \item \verb|sha1|
+    \end{enumerate}
+    \end{multicols}
 
 \end{document}
