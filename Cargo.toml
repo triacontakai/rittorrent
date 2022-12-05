@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 libc = "0.2.137"
 anyhow = "1.0.66"
+url = "2.3.1"

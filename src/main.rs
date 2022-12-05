@@ -1,47 +1,47 @@
-mod helpers;
-mod poll;
+mod connections;
+mod peers;
+mod threads;
 
-use std::{io, net::TcpListener, time::Duration};
+// temp delete me
+mod http;
 
 use anyhow::Result;
-use poll::{Events, Interest, Poll, Token};
+use http::http_get; // temporary
+use threads::Response;
 
-const INPUT: Token = 0;
-const SERVER: Token = 1;
+use std::{
+    collections::HashMap,
+    net::{SocketAddr, TcpListener},
+    sync::mpsc,
+};
+
+use crate::peers::{spawn_peer_thread, PeerRequest};
 
 fn main() -> Result<()> {
-    let mut poll = Poll::new()?;
+    let mut peers = HashMap::new();
 
-    let stdin = io::stdin();
-    let server = TcpListener::bind("127.0.0.1:5000")?;
+    let (tx, rx) = mpsc::channel();
 
-    poll.register(&stdin, INPUT, Interest::READABLE)?;
-    poll.register(&server, SERVER, Interest::READABLE)?;
+    let server = TcpListener::bind("0.0.0.0:5000")?;
 
-    let mut events = Events::with_capacity(20);
+    connections::spawn_accept_thread(server, tx.clone());
 
-    loop {
-        poll.poll(&mut events, Some(Duration::from_secs(3)))?;
+    for resp in rx.iter() {
+        match resp {
+            Response::Connection(data) => {
+                println!("{:?}", data.peer);
 
-        println!("woke up from poll with {} events", events.len());
+                let addr = data.peer.peer_addr()?;
+                let peer_sender = spawn_peer_thread(data.peer, tx.clone());
+                peers.insert(addr, peer_sender.clone());
 
-        for event in events.iter() {
-            match event.token() {
-                INPUT => {
-                    if event.is_readable() {
-                        let mut input = String::new();
-                        stdin.read_line(&mut input)?;
-                        println!("read line: {}", input);
-                    }
-                }
-                SERVER => {
-                    if event.is_readable() {
-                        let connection = server.accept()?;
-                        println!("accepted connection: {:?}", connection)
-                    }
-                }
-                _ => unreachable!(),
+                peer_sender.send(PeerRequest::GetInfo)?;
+            }
+            Response::Peer(data) => {
+                println!("received response {:?}", data);
             }
         }
     }
+
+    Ok(())
 }
