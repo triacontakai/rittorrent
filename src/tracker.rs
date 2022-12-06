@@ -1,3 +1,4 @@
+
 mod request {
     use std::net::SocketAddr;
 
@@ -20,21 +21,30 @@ mod request {
 }
 
 mod response {
-    use std::net::SocketAddr;
+    use serde::{Deserialize, Serialize};
 
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
     pub struct Peer {
-        addr: SocketAddr,
+        #[serde(rename = "peer id")]
+        peer_id: String,
+
+        ip: String,
+
+        port: u16,
     }
 
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
     pub struct Response {
+        #[serde(default)]
         interval: u32,
+
+        #[serde(default)]
         peers: Vec<Peer>,
     }
 }
 
-use std::net::ToSocketAddrs;
-
 use anyhow::Result;
+use bendy::serde::from_bytes;
 
 use request::Request;
 use response::Response;
@@ -63,7 +73,9 @@ impl Request {
         ];
         let http_response = http_get(url, &query)?;
 
-        println!("response: {:?}", String::from_utf8(http_response.content));
+        let tracker_response = from_bytes::<Response>(&http_response.content)?;
+
+        println!("response: {:?}", tracker_response);
 
         use anyhow::anyhow;
         Err(anyhow!("unimplemented!"))
@@ -80,7 +92,7 @@ mod tests {
     fn send_test_1() {
         use super::request::Event::*;
         let test_req = Request {
-            info_hash: hex!("deadbeefdeadbeefdeaddeadbeefdeadbeefdead"),
+            info_hash: hex!("d4437aed681cb06c5ecbcf2c7f590ae8a3f73aeb"),
             peer_id: String::from("supercool"),
             my_ip: String::from("127.0.0.1:5000"),
             my_port: 5000,
