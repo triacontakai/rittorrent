@@ -1,12 +1,10 @@
 use std::borrow::Borrow;
-use std::fs::read;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
-use std::time::Duration;
-use std::{collections::HashMap, io, net::TcpStream};
+use std::{collections::HashMap, net::TcpStream};
 
 use anyhow::{anyhow, Result};
 use format_bytes::format_bytes;
-use url::{ParseError, Position, Url};
+use url::{Position, Url};
 
 const CRLF: &[u8] = b"\r\n";
 
@@ -72,7 +70,6 @@ where
 
     for line in reader.by_ref().lines() {
         let line = line?;
-        println!("{:?}", line);
 
         // If empty line, we're done with headers
         if line == "" {
