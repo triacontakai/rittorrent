@@ -6,15 +6,12 @@ mod threads;
 mod http;
 mod tracker;
 
+mod file;
+
 use anyhow::Result;
-use http::http_get; // temporary
 use threads::Response;
 
-use std::{
-    collections::HashMap,
-    net::{SocketAddr, TcpListener},
-    sync::mpsc,
-};
+use std::{collections::HashMap, net::TcpListener, sync::mpsc};
 
 use crate::peers::{spawn_peer_thread, PeerRequest};
 
