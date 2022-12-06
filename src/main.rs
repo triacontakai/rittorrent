@@ -5,6 +5,7 @@ mod threads;
 // temp delete me
 mod http;
 mod tracker;
+mod torrent;
 
 mod file;
 
