@@ -56,14 +56,19 @@ impl DownloadFile {
         file_name: impl AsRef<Path>,
         hashes: &[[u8; DIGEST_SIZE]],
         piece_size: usize,
-        total_size: usize
+        total_size: usize,
     ) -> Result<Self> {
         let file = File::create(file_name)?;
 
         Self::new_from_file(file, hashes, piece_size, total_size)
     }
 
-    fn new_from_file(file: File, hashes: &[[u8; DIGEST_SIZE]], piece_size: usize, total_size: usize) -> Result<Self> {
+    fn new_from_file(
+        file: File,
+        hashes: &[[u8; DIGEST_SIZE]],
+        piece_size: usize,
+        total_size: usize,
+    ) -> Result<Self> {
         let mut pieces = Vec::new();
         let mut offset = 0;
 
@@ -83,7 +88,6 @@ impl DownloadFile {
         // fix the end offset of the last piece
         let mut last = pieces.last_mut().unwrap();
         last.range.end = total_size;
-
 
         Ok(DownloadFile {
             pieces,
@@ -121,9 +125,9 @@ impl DownloadFile {
             return Ok(());
         }
 
-
         // seek to position of piece in file and write block
-        self.file.seek(SeekFrom::Start((piece.range.start + piece.offset) as u64))?;
+        self.file
+            .seek(SeekFrom::Start((piece.range.start + piece.offset) as u64))?;
         self.file.write_all(block.data)?;
 
         piece.hasher.update(block.data);

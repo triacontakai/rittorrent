@@ -12,6 +12,7 @@ url = "2.3.1"
 sha1 = "0.10.5"
 bitvec = "1.0.1"
 bendy = "0.3.3"
+format-bytes = "0.3.0"
 
 [dev-dependencies]
 tempfile = "3.3.0"
