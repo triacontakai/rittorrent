@@ -10,9 +10,9 @@ const CRLF: &[u8] = b"\r\n";
 
 #[derive(Debug)]
 pub struct Response {
-    status: u32,
-    content: Vec<u8>,
-    headers: HashMap<String, String>,
+    pub status: u32,
+    pub content: Vec<u8>,
+    pub headers: HashMap<String, String>,
 }
 
 fn strip_leading_whitespace(s: &mut String) {
