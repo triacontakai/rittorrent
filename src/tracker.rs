@@ -1,7 +1,5 @@
 
 mod request {
-    use std::net::SocketAddr;
-
     pub enum Event {
         Started,
         Completed,
@@ -11,7 +9,6 @@ mod request {
     pub struct Request {
         pub info_hash: [u8; 20],
         pub peer_id: String,
-        pub my_ip: String,
         pub my_port: u16,
         pub uploaded: usize,
         pub downloaded: usize,
@@ -59,7 +56,6 @@ impl Request {
         let query = [
             ("info_hash", encode_binary(&self.info_hash).into_owned()),
             ("peer_id", encode(&self.peer_id).into_owned()),
-            ("ip", encode(&self.my_ip).into_owned()),
             ("port", self.my_port.to_string()),
             ("uploaded", self.uploaded.to_string()),
             ("downloaded", self.downloaded.to_string()),
@@ -72,13 +68,13 @@ impl Request {
             })
         ];
         let http_response = http_get(url, &query)?;
+        println!("http_response: {:?}", String::from_utf8_lossy(&http_response.content));
 
         let tracker_response = from_bytes::<Response>(&http_response.content)?;
 
         println!("response: {:?}", tracker_response);
 
-        use anyhow::anyhow;
-        Err(anyhow!("unimplemented!"))
+        Ok(tracker_response)
     }
 }
 
@@ -94,7 +90,6 @@ mod tests {
         let test_req = Request {
             info_hash: hex!("d4437aed681cb06c5ecbcf2c7f590ae8a3f73aeb"),
             peer_id: String::from("supercool"),
-            my_ip: String::from("127.0.0.1:5000"),
             my_port: 5000,
             uploaded: 420,
             downloaded: 69,
