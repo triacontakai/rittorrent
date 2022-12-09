@@ -1,4 +1,3 @@
-
 mod request {
     pub enum Event {
         Started,
@@ -17,26 +16,26 @@ mod request {
     }
 }
 
-mod response {
+pub mod response {
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
     pub struct Peer {
-        #[serde(rename = "peer id")]
-        peer_id: String,
+        #[serde(rename = "peer id", with = "serde_bytes")]
+        pub peer_id: Vec<u8>,
 
-        ip: String,
+        pub ip: String,
 
-        port: u16,
+        pub port: u16,
     }
 
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
     pub struct Response {
         #[serde(default)]
-        interval: u32,
+        pub interval: u32,
 
         #[serde(default)]
-        peers: Vec<Peer>,
+        pub peers: Vec<Peer>,
     }
 }
 
@@ -45,38 +44,42 @@ use bendy::serde::from_bytes;
 
 use request::Request;
 use response::Response;
-use urlencoding::{encode_binary, encode};
 
 use crate::http::http_get;
 
 impl Request {
-    fn send(&self, url: &str) -> Result<Response> {
+    pub fn send(&self, url: &str) -> Result<Response> {
         // Try to send the HTTP request
         use request::Event::*;
-        let query = [
-            ("info_hash", encode_binary(&self.info_hash).into_owned()),
-            ("peer_id", encode(&self.peer_id).into_owned()),
-            ("port", self.my_port.to_string()),
-            ("uploaded", self.uploaded.to_string()),
-            ("downloaded", self.downloaded.to_string()),
-            ("left", self.left.to_string()),
-            ("event", match self.event {
-                Some(Started) => String::from("started"),
-                Some(Completed) => String::from("completed"),
-                Some(Stopped) => String::from("stopped"),
-                None => String::from("empty"),
-            })
+        let port = self.my_port.to_string();
+        let uploaded = self.uploaded.to_string();
+        let downloaded = self.downloaded.to_string();
+        let left = self.left.to_string();
+        let query: [(&str, &[u8]); 7] = [
+            ("info_hash", &self.info_hash),
+            ("peer_id", &self.peer_id.as_bytes()),
+            ("port", port.as_bytes()),
+            ("uploaded", uploaded.as_bytes()),
+            ("downloaded", downloaded.as_bytes()),
+            ("left", left.as_bytes()),
+            (
+                "event",
+                match self.event {
+                    Some(Started) => "started".as_bytes(),
+                    Some(Completed) => "completed".as_bytes(),
+                    Some(Stopped) => "stopped".as_bytes(),
+                    None => "empty".as_bytes(),
+                },
+            ),
         ];
+
         let http_response = http_get(url, &query)?;
-        println!("http_response: {:?}", String::from_utf8_lossy(&http_response.content));
-
         let tracker_response = from_bytes::<Response>(&http_response.content)?;
-
-        println!("response: {:?}", tracker_response);
 
         Ok(tracker_response)
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -89,7 +92,7 @@ mod tests {
         use super::request::Event::*;
         let test_req = Request {
             info_hash: hex!("d4437aed681cb06c5ecbcf2c7f590ae8a3f73aeb"),
-            peer_id: String::from("supercool"),
+            peer_id: String::from("deadbeefdeadbeefbeef"),
             my_port: 5000,
             uploaded: 420,
             downloaded: 69,

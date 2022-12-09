@@ -16,6 +16,9 @@ bendy = { version = "0.3.3", features = ["std", "serde"] }
 serde = { version = "1.0.149", features = ["derive"] }
 serde_bytes = "0.11.7"
 urlencoding = "2.1.2"
+regex = "1.7.0"
+clap = { version = "4.0.29", features = ["derive"] }
+lazy_static = "1.4.0"
 
 [dev-dependencies]
 tempfile = "3.3.0"

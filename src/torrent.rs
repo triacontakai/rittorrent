@@ -1,7 +1,7 @@
 use bendy::serde::to_bytes;
 use serde::{Deserialize, Serialize};
-use sha1::Sha1;
 use sha1::digest::Digest;
+use sha1::Sha1;
 
 const DIGEST_SIZE: usize = 20;
 
@@ -13,7 +13,7 @@ struct MetaInfo {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct Info {
-    #[serde(rename = "piece length")] 
+    #[serde(rename = "piece length")]
     piece_length: usize,
 
     #[serde(with = "serde_bytes")]
@@ -24,7 +24,7 @@ struct Info {
     length: usize,
 
     private: bool,
-} 
+}
 
 impl MetaInfo {
     pub fn info_hash(&self) -> [u8; DIGEST_SIZE] {
@@ -36,9 +36,9 @@ impl MetaInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, fs::File, io::Read};
     use bendy::serde::{from_bytes, to_bytes};
     use hex_literal::hex;
+    use std::{fs::File, io::Read, path::PathBuf};
 
     use super::MetaInfo;
 
