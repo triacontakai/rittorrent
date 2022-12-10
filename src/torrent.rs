@@ -6,7 +6,7 @@ use sha1::Sha1;
 const DIGEST_SIZE: usize = 20;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct MetaInfo {
+pub struct MetaInfo {
     announce: String,
     info: Info,
 }
