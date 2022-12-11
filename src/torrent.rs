@@ -23,6 +23,7 @@ struct Info {
 
     length: usize,
 
+    #[serde(default)]
     private: bool,
 }
 
