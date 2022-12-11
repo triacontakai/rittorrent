@@ -37,11 +37,11 @@ fn main() -> Result<()> {
     let tracker_sender = tracker::spawn_tracker_thread(tx.clone());
 
     // open file
-    let hashes: Vec<[u8; 20]> = METAINFO
+    let hashes: Vec<[u8; DIGEST_SIZE]> = METAINFO
         .info
         .pieces
         .chunks_exact(DIGEST_SIZE)
-        .map(|x| x.try_into().expect("malformed torrent piece hashes"))
+        .map(|x| x.try_into().unwrap())
         .collect();
     let file = DownloadFile::new(
         METAINFO.info.name.clone(),
