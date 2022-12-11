@@ -53,6 +53,7 @@ use bendy::serde::from_bytes;
 use request::Request;
 use response::Response;
 
+use crate::args::{ARGS, METAINFO, PEER_ID};
 use crate::http::http_get;
 use crate::threads;
 
@@ -94,13 +95,13 @@ impl Request {
 }
 
 #[derive(Debug)]
-pub struct ThreadRequest {
+pub struct TrackerRequest {
     pub url: String,
     pub request: Request,
 }
 
-pub fn spawn_tracker_thread(sender: Sender<threads::Response>) -> Sender<ThreadRequest> {
-    let (tx, rx) = mpsc::channel::<ThreadRequest>();
+pub fn spawn_tracker_thread(sender: Sender<threads::Response>) -> Sender<TrackerRequest> {
+    let (tx, rx) = mpsc::channel::<TrackerRequest>();
 
     thread::spawn(move || {
         // main loop for tracker-interaction thread
