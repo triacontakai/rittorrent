@@ -150,7 +150,6 @@ impl Message {
         } else if message_type == MessageType::NotInterested as u8 {
             Ok(Self::NotInterested)
         } else if message_type == MessageType::Have as u8 {
-
             if buf.len() == 4 {
                 let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
 
@@ -158,11 +157,9 @@ impl Message {
             } else {
                 Err(anyhow!("Received invalid Have message"))
             }
-
         } else if message_type == MessageType::Bitfield as u8 {
             Ok(Self::Bitfield(buf))
         } else if message_type == MessageType::Request as u8 {
-
             if buf.len() == 12 {
                 let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
                 let begin = u32::from_be_bytes(buf[4..8].try_into().unwrap());
@@ -172,9 +169,7 @@ impl Message {
             } else {
                 Err(anyhow!("Received invalid Request message"))
             }
-
         } else if message_type == MessageType::Piece as u8 {
-
             if buf.len() >= 8 {
                 let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
                 let begin = u32::from_be_bytes(buf[4..8].try_into().unwrap());
@@ -184,9 +179,7 @@ impl Message {
             } else {
                 Err(anyhow!("Received invalid Piece message"))
             }
-        
         } else if message_type == MessageType::Cancel as u8 {
-
             if buf.len() == 12 {
                 let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
                 let begin = u32::from_be_bytes(buf[4..8].try_into().unwrap());
@@ -196,7 +189,6 @@ impl Message {
             } else {
                 Err(anyhow!("Received invalid Cancel message"))
             }
-
         } else {
             Err(anyhow!("Received unsupported message type"))
         }
@@ -276,7 +268,11 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
 #[cfg(test)]
 mod tests {
 
-    use std::{io::{BufReader, BufWriter}, thread, sync::mpsc};
+    use std::{
+        io::{BufReader, BufWriter},
+        sync::mpsc,
+        thread,
+    };
 
     use pipe;
 
@@ -293,7 +289,9 @@ mod tests {
             Interested,
             NotInterested,
             Have(12345678),
-            Bitfield(vec![102, 117, 99, 107, 32, 98, 114, 97, 109, 32, 99, 111, 104, 101, 110]),
+            Bitfield(vec![
+                102, 117, 99, 107, 32, 98, 114, 97, 109, 32, 99, 111, 104, 101, 110,
+            ]),
             Request(123, 456, 789),
             Piece(5810134, 215970, vec![204, 10, 0]),
             Cancel(789, 456, 123),
@@ -322,5 +320,4 @@ mod tests {
 
         handle.join().unwrap();
     }
-
 }
