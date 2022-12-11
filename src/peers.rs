@@ -25,6 +25,7 @@ enum MessageType {
     Cancel = 8,
 }
 
+#[derive(Debug, PartialEq)]
 enum Message {
     Keepalive,
     Choke,
@@ -59,7 +60,7 @@ pub struct PeerInfo {
 }
 
 impl Message {
-    fn send(&self, writer: &mut BufWriter<TcpStream>) -> Result<()> {
+    fn send(&self, writer: &mut BufWriter<impl Write>) -> Result<()> {
         let mut buf: Vec<u8> = Vec::new();
 
         use Message::*;
@@ -113,19 +114,31 @@ impl Message {
         Ok(())
     }
 
-    fn recv(reader: &mut BufReader<TcpStream>) -> Result<Self> {
+    fn recv(reader: &mut BufReader<impl Read>) -> Result<Self> {
         // Receive length first
-        let mut length_buf = [0u8; 1];
+        let mut length_buf = [0u8; 4];
         reader.read_exact(&mut length_buf)?;
 
+        let length: usize = u32::from_be_bytes(length_buf) as usize;
+
+        // empty message is a keepalive
+        if length == 0 {
+            return Ok(Self::Keepalive);
+        }
+
+        // Then read the first (type) byte
+        let mut type_buf = [0u8; 1];
+        reader.read_exact(&mut type_buf)?;
+        let message_type = type_buf[0];
+
         // Next, read the rest of the message
-        let mut buf: Vec<u8> = vec![0; length_buf[0] as usize];
+        let mut buf: Vec<u8> = vec![0; length - 1];
         reader.read_exact(&mut buf)?;
 
-        let Some(&message_type) = buf.get(0) else {
-            // if we read nothing, this is a keepalive
-            return Ok(Self::Keepalive);
-        };
+        //let Some(&message_type) = buf.get(0) else {
+        //    // if we read nothing, this is a keepalive
+        //    return Ok(Self::Keepalive);
+        //};
 
         // Try to parse the message
         if message_type == MessageType::Choke as u8 {
@@ -138,15 +151,52 @@ impl Message {
             Ok(Self::NotInterested)
         } else if message_type == MessageType::Have as u8 {
 
-            let Ok(bytes): Result<[u8; 4], _> = buf.try_into() else {
-                return Err(anyhow!("Received invalid Have message"));
-            };
+            if buf.len() == 4 {
+                let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
 
-            Ok(Self::Have(u32::from_be_bytes(bytes)))
+                Ok(Self::Have(idx))
+            } else {
+                Err(anyhow!("Received invalid Have message"))
+            }
 
         } else if message_type == MessageType::Bitfield as u8 {
             Ok(Self::Bitfield(buf))
-            // TODO: finish this
+        } else if message_type == MessageType::Request as u8 {
+
+            if buf.len() == 12 {
+                let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
+                let begin = u32::from_be_bytes(buf[4..8].try_into().unwrap());
+                let len = u32::from_be_bytes(buf[8..12].try_into().unwrap());
+
+                Ok(Self::Request(idx, begin, len))
+            } else {
+                Err(anyhow!("Received invalid Request message"))
+            }
+
+        } else if message_type == MessageType::Piece as u8 {
+
+            if buf.len() >= 8 {
+                let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
+                let begin = u32::from_be_bytes(buf[4..8].try_into().unwrap());
+                let piece: Vec<u8> = buf[8..].to_vec();
+
+                Ok(Self::Piece(idx, begin, piece))
+            } else {
+                Err(anyhow!("Received invalid Piece message"))
+            }
+        
+        } else if message_type == MessageType::Cancel as u8 {
+
+            if buf.len() == 12 {
+                let idx = u32::from_be_bytes(buf[0..4].try_into().unwrap());
+                let begin = u32::from_be_bytes(buf[4..8].try_into().unwrap());
+                let len = u32::from_be_bytes(buf[8..12].try_into().unwrap());
+
+                Ok(Self::Cancel(idx, begin, len))
+            } else {
+                Err(anyhow!("Received invalid Cancel message"))
+            }
+
         } else {
             Err(anyhow!("Received unsupported message type"))
         }
@@ -169,8 +219,8 @@ pub fn connect_to_peer(peer: Peer) -> Result<TcpStream> {
 }
 
 fn do_handshake(
-    reader: &mut BufReader<TcpStream>,
-    writer: &mut BufWriter<TcpStream>,
+    reader: &mut BufReader<impl Read>,
+    writer: &mut BufWriter<impl Write>,
 ) -> Result<()> {
     const HEADER_LEN: usize = 49 + PROTO_IDENTIFIER.len();
 
@@ -221,4 +271,56 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
     });
 
     tx
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::{io::{BufReader, BufWriter}, thread, sync::mpsc};
+
+    use pipe;
+
+    use super::Message;
+
+    use Message::*;
+
+    #[test]
+    fn peer_msg_test() {
+        let test_messages: [Message; 10] = [
+            Keepalive,
+            Choke,
+            Unchoke,
+            Interested,
+            NotInterested,
+            Have(12345678),
+            Bitfield(vec![102, 117, 99, 107, 32, 98, 114, 97, 109, 32, 99, 111, 104, 101, 110]),
+            Request(123, 456, 789),
+            Piece(5810134, 215970, vec![204, 10, 0]),
+            Cancel(789, 456, 123),
+        ];
+
+        let (read, write) = pipe::pipe();
+        let mut reader = BufReader::new(read);
+        let mut writer = BufWriter::new(write);
+
+        let (tx, rx) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            // try to receive message
+            let msg = Message::recv(&mut reader).unwrap();
+            tx.send(msg).unwrap();
+        });
+
+        for msg in test_messages {
+            // send the message
+            msg.send(&mut writer).unwrap();
+
+            // what did the second thread receive?
+            let received = rx.recv().unwrap();
+            assert_eq!(msg, received);
+        }
+
+        handle.join().unwrap();
+    }
+
 }
