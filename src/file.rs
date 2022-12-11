@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{Seek, SeekFrom, Write},
-    ops::{Range, IndexMut},
+    ops::{IndexMut, Range},
     path::Path,
 };
 
@@ -152,7 +152,6 @@ impl DownloadFile {
             piece.hasher.finalize_into_reset((&mut hash).into());
 
             if hash == piece.hash {
-
                 // add piece to completed bitmap
                 // (no IndexMut<usize> for BitSlice ????)
                 *self.bitfield.get_mut(block.piece).unwrap() = true;

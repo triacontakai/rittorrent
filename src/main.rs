@@ -4,6 +4,7 @@ mod file;
 mod http;
 mod peers;
 mod threads;
+mod timer;
 mod torrent;
 mod tracker;
 
@@ -47,22 +48,9 @@ fn main() -> Result<()> {
             Response::Tracker(data) => {
                 println!("main thread received response {:#?}", data);
             }
+            Response::Timer(_) => unimplemented!(),
         }
     }
 
     Ok(())
 }
-
-// tracker test
-//tracker_sender.send(tracker::ThreadRequest {
-//    url: String::from("http://128.8.126.63:21212/announce"),
-//    request: tracker::request::Request {
-//        info_hash: hex!("d4437aed681cb06c5ecbcf2c7f590ae8a3f73aeb"),
-//        peer_id: String::from("deadbeefdeafbeefbeef"),
-//        my_port: 5000,
-//        uploaded: 0,
-//        downloaded: 0,
-//        left: 0,
-//        event: Some(tracker::request::Event::Started),
-//    },
-//})?;

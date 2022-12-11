@@ -7,24 +7,24 @@ const DIGEST_SIZE: usize = 20;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct MetaInfo {
-    announce: String,
-    info: Info,
+    pub announce: String,
+    pub info: Info,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct Info {
+pub struct Info {
     #[serde(rename = "piece length")]
-    piece_length: usize,
+    pub piece_length: usize,
 
     #[serde(with = "serde_bytes")]
-    pieces: Vec<u8>,
+    pub pieces: Vec<u8>,
 
-    name: String,
+    pub name: String,
 
-    length: usize,
+    pub length: usize,
 
     #[serde(default)]
-    private: bool,
+    pub private: bool,
 }
 
 impl MetaInfo {
