@@ -1,13 +1,15 @@
-mod request {
+pub mod request {
+    #[derive(Debug)]
     pub enum Event {
         Started,
         Completed,
         Stopped,
     }
 
+    #[derive(Debug)]
     pub struct Request {
         pub info_hash: [u8; 20],
-        pub peer_id: String,
+        pub peer_id: [u8; 20],
         pub my_port: u16,
         pub uploaded: usize,
         pub downloaded: usize,
@@ -36,16 +38,23 @@ pub mod response {
 
         #[serde(default)]
         pub peers: Vec<Peer>,
+
+        #[serde(rename = "failure reason", default)]
+        pub(super) failure_reason: String,
     }
 }
 
-use anyhow::Result;
+use std::sync::mpsc::{self, Sender};
+use std::thread::{self};
+
+use anyhow::{anyhow, Result};
 use bendy::serde::from_bytes;
 
 use request::Request;
 use response::Response;
 
 use crate::http::http_get;
+use crate::threads;
 
 impl Request {
     pub fn send(&self, url: &str) -> Result<Response> {
@@ -57,7 +66,7 @@ impl Request {
         let left = self.left.to_string();
         let query: [(&str, &[u8]); 7] = [
             ("info_hash", &self.info_hash),
-            ("peer_id", &self.peer_id.as_bytes()),
+            ("peer_id", &self.peer_id),
             ("port", port.as_bytes()),
             ("uploaded", uploaded.as_bytes()),
             ("downloaded", downloaded.as_bytes()),
@@ -76,10 +85,35 @@ impl Request {
         let http_response = http_get(url, &query)?;
         let tracker_response = from_bytes::<Response>(&http_response.content)?;
 
-        Ok(tracker_response)
+        if tracker_response.interval == 0 {
+            Err(anyhow!(tracker_response.failure_reason))
+        } else {
+            Ok(tracker_response)
+        }
     }
 }
 
+#[derive(Debug)]
+pub struct ThreadRequest {
+    pub url: String,
+    pub request: Request,
+}
+
+pub fn spawn_tracker_thread(sender: Sender<threads::Response>) -> Sender<ThreadRequest> {
+    let (tx, rx) = mpsc::channel::<ThreadRequest>();
+
+    thread::spawn(move || {
+        // main loop for tracker-interaction thread
+        for req in rx {
+            println!("Tracker thread received request {:#?}", req);
+
+            let result = req.request.send(&req.url);
+            sender.send(threads::Response::Tracker(result)).expect("hi");
+        }
+    });
+
+    tx
+}
 
 #[cfg(test)]
 mod tests {
@@ -92,7 +126,7 @@ mod tests {
         use super::request::Event::*;
         let test_req = Request {
             info_hash: hex!("d4437aed681cb06c5ecbcf2c7f590ae8a3f73aeb"),
-            peer_id: String::from("deadbeefdeadbeefbeef"),
+            peer_id: "deadbeefdeadbeefbeef".as_bytes().try_into().unwrap(),
             my_port: 5000,
             uploaded: 420,
             downloaded: 69,

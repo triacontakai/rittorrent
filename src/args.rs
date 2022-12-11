@@ -1,5 +1,11 @@
-use clap::{ValueEnum, Parser};
+use std::{fs::File, io::Read, path::PathBuf};
+
+use bendy::serde::from_bytes;
+use clap::{Parser, ValueEnum};
 use lazy_static::lazy_static;
+use rand::RngCore;
+
+use crate::torrent::MetaInfo;
 
 #[derive(ValueEnum, Clone, Debug)]
 enum TrackerType {
@@ -28,6 +34,30 @@ pub struct Args {
     tracker_type: TrackerType,
 }
 
+const PEER_ID_LEN: usize = 20;
+
 lazy_static! {
+    // Command-line arguments
     pub static ref ARGS: Args = Args::parse();
+
+    // Ranodmly-generated peer id
+    pub static ref PEER_ID: [u8; PEER_ID_LEN] = {
+        let mut data = [0u8; PEER_ID_LEN];
+        rand::thread_rng().fill_bytes(&mut data);
+        data
+    };
+
+    // Parsed metainfo file
+    pub static ref METAINFO: MetaInfo = {
+        let torrent_path = PathBuf::from(&ARGS.torrent);
+        let mut torrent_file = File::open(torrent_path)
+            .expect("Failed to open provided torrent file");
+        let mut result = Vec::new();
+        torrent_file
+            .read_to_end(&mut result)
+            .expect("Failed to read from provided torrent file");
+
+        from_bytes::<MetaInfo>(&result)
+            .expect("Failed to parse provided torrent file")
+    };
 }
