@@ -31,7 +31,7 @@ pub struct Args {
 
     // Force a specific tracker protocol to be used
     #[arg(short = 'r', long)]
-    pub tracker_type: TrackerType,
+    tracker_type: TrackerType,
 }
 
 const PEER_ID_LEN: usize = 20;
