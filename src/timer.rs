@@ -10,7 +10,7 @@ use crate::threads::{self, Response};
 pub type Token = u64;
 
 pub struct TimerResponse {
-    id: u64,
+    id: Token,
 }
 
 pub struct TimerRequest {
