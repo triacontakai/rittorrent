@@ -296,6 +296,7 @@ mod tests {
             Piece(5810134, 215970, vec![204, 10, 0]),
             Cancel(789, 456, 123),
         ];
+        let num_messages = test_messages.len();
 
         let (read, write) = pipe::pipe();
         let mut reader = BufReader::new(read);
@@ -304,9 +305,11 @@ mod tests {
         let (tx, rx) = mpsc::channel();
 
         let handle = thread::spawn(move || {
-            // try to receive message
-            let msg = Message::recv(&mut reader).unwrap();
-            tx.send(msg).unwrap();
+            for _ in 0..num_messages {
+                // try to receive message
+                let msg = Message::recv(&mut reader).unwrap();
+                tx.send(msg).unwrap();
+            }
         });
 
         for msg in test_messages {
