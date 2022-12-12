@@ -139,6 +139,12 @@ impl DownloadFile {
         self.bitfield.as_raw_slice()
     }
 
+    /// Return a `Some(&[Range<usize])` containing all the unfilled ranges for the given piece
+    /// Returns `None` if `idx` is out of bounds
+    pub fn get_blocks(&self, idx: usize) -> Option<&[Range<usize>]> {
+        self.pieces.get(idx).map(|x| &x.unfilled[..])
+    }
+
     /// Pass a block to the DownloadFile in order to be processed
     /// Returns [Err] if block is for an out-of-range piece/file operations failed, and [Ok] otherwise
     pub fn process_block(&mut self, block: Block) -> Result<()> {
