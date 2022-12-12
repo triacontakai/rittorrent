@@ -1,6 +1,7 @@
 use std::{
+    collections::HashSet,
     fs::File,
-    io::{Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     ops::{IndexMut, Range},
     path::Path,
 };
@@ -11,6 +12,7 @@ use sha1::{Digest, Sha1};
 use anyhow::{bail, Result};
 
 const DIGEST_SIZE: usize = 20;
+const BLOCK_SIZE: usize = 32768;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct Block<'a> {
@@ -21,10 +23,11 @@ pub struct Block<'a> {
 
 #[derive(Debug)]
 struct Piece {
-    range: Range<usize>,
+    unfilled: Vec<Range<usize>>, // this is really more of a Set, but we want to be able to return it as a slice
+    all_blocks: Vec<Range<usize>>,
     offset: usize,
+    length: usize,
     hash: [u8; DIGEST_SIZE],
-    hasher: Sha1,
 }
 
 #[derive(Debug)]
@@ -47,8 +50,25 @@ impl<'a> Block<'a> {
 
 impl Piece {
     fn is_complete(&self) -> bool {
-        self.range.start.checked_add(self.offset).unwrap() == self.range.end
+        //self.range.start.checked_add(self.offset).unwrap() == self.range.end
+        self.unfilled.is_empty()
     }
+}
+
+fn get_block_ranges(start: usize, end: usize, size: usize) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+
+    let mut current = start;
+
+    while current + size < end {
+        ranges.push(current..current + size);
+        current += size;
+    }
+
+    if current < end {
+        ranges.push(current..end);
+    }
+    ranges
 }
 
 impl DownloadFile {
@@ -74,20 +94,32 @@ impl DownloadFile {
 
         file.set_len(total_size as u64)?;
 
-        for hash in hashes {
+        // loop through all but last piece
+        for hash in hashes.iter().rev().skip(1).rev() {
+            let all_blocks = get_block_ranges(0, piece_size, BLOCK_SIZE);
+            let unfilled = all_blocks.clone();
+
             pieces.push(Piece {
-                range: (offset..offset + piece_size),
-                offset: 0,
+                unfilled,
+                all_blocks,
+                offset,
+                length: piece_size,
                 hash: *hash,
-                hasher: Sha1::new(),
             });
 
             offset += piece_size;
         }
 
-        // fix the end offset of the last piece
-        let mut last = pieces.last_mut().unwrap();
-        last.range.end = total_size;
+        // special case for last piece since it can be short
+        let all_blocks = get_block_ranges(0, total_size - offset, BLOCK_SIZE);
+        let unfilled = all_blocks.clone();
+        pieces.push(Piece {
+            unfilled,
+            all_blocks,
+            offset,
+            length: total_size - offset,
+            hash: *hashes.last().expect("invalid size of hash list"),
+        });
 
         let num_pieces = pieces.len();
 
@@ -107,58 +139,54 @@ impl DownloadFile {
         self.bitfield.as_raw_slice()
     }
 
+    /// Pass a block to the DownloadFile in order to be processed
+    /// Returns [Err] if block is for an out-of-range piece/file operations failed, and [Ok] otherwise
     pub fn process_block(&mut self, block: Block) -> Result<()> {
-        if block.piece >= self.pieces.len() {
-            bail!("piece index out of bounds");
-        }
-
-        let piece = &mut self.pieces[block.piece];
-
-        // check if piece is contiguous to what we already have
-        if block.offset != piece.offset {
-            bail!("block does not match start of what we have read");
-        }
-
-        // check that block fits in bounds of piece
-        let Some(current_pos) = piece.range.start.checked_add(piece.offset) else {
-            bail!("block out of bounds");
+        let Some(piece) = self.pieces.get_mut(block.piece) else {
+            bail!("piece out of range");
         };
-        let Some(new_pos) = current_pos.checked_add(block.data.len()) else {
-            bail!("block out of bounds");
-        };
-        if new_pos > piece.range.end {
-            bail!("block out of bounds");
-        }
 
-        // check if we have already completed the piece
+        let range = block.offset..(block.offset + block.data.len());
+
+        // if the piece is already done we don't need to do any work
         if piece.is_complete() {
             return Ok(());
         }
 
-        // seek to position of piece in file and write block
+        // find this block
+        let Some(idx) = piece.unfilled.iter().position(|x| *x == range) else {
+            return Ok(());
+        };
+
+        // seek to position in file and write this block, since by this point we know it is unfilled
         self.file
-            .seek(SeekFrom::Start((piece.range.start + piece.offset) as u64))?;
+            .seek(SeekFrom::Start((range.start + piece.offset) as u64))?;
         self.file.write_all(block.data)?;
 
-        piece.hasher.update(block.data);
+        // this block now counts as filled, so remove from unfilled
+        piece.unfilled.swap_remove(idx);
 
-        // move piece offset forward based on what was written
-        piece.offset += block.data.len();
-
-        // if we are done with the piece, finalize hash and check if it is correct
-        // if not correct, restart and reset hasher
+        // if piece is complete, do hashing to verify integrity
         if piece.is_complete() {
-            let mut hash = [0u8; DIGEST_SIZE];
-            piece.hasher.finalize_into_reset((&mut hash).into());
+            let mut hasher = Sha1::new();
+            let mut buf = vec![0u8; 4096];
 
-            if hash == piece.hash {
-                // add piece to completed bitmap
-                // (no IndexMut<usize> for BitSlice ????)
+            self.file.seek(SeekFrom::Start(piece.offset as u64))?;
+            let mut remaining = piece.length;
+            while remaining > 0 {
+                let to_read = buf.len().min(remaining);
+                let bytes_read = self.file.read(&mut buf[..to_read])?;
+
+                hasher.update(&buf[..bytes_read]);
+                remaining -= bytes_read;
+            }
+
+            let hash = hasher.finalize();
+            if hash == piece.hash.into() {
                 *self.bitfield.get_mut(block.piece).unwrap() = true;
-
                 Ok(())
             } else {
-                piece.offset = 0;
+                piece.unfilled = piece.all_blocks.clone();
                 Ok(())
             }
         } else {
@@ -174,7 +202,19 @@ mod tests {
     use hex_literal::hex;
     use tempfile;
 
-    use super::{Block, DownloadFile};
+    use super::{get_block_ranges, Block, DownloadFile};
+
+    #[test]
+    fn get_block_ranges_test() {
+        let ranges = get_block_ranges(0, 33, 10);
+        assert_eq!(&ranges, &[(0..10), (10..20), (20..30), (30..33)]);
+    }
+
+    #[test]
+    fn get_block_ranges_test_current_is_end() {
+        let ranges = get_block_ranges(0, 0, 10);
+        assert_eq!(&ranges, &[]);
+    }
 
     #[test]
     fn file_one_piece_success() {
@@ -239,26 +279,31 @@ mod tests {
 
     #[test]
     fn file_two_piece_partial_success() {
-        let data1 = vec![0; 1024];
-        let data2 = vec![1; 1024];
+        let data1 = vec![0; 65536];
+        let data2 = vec![1; 65536];
         let hashes = &[
-            hex!("60cacbf3d72e1e7834203da608037b1bf83b40e8"),
-            hex!("376f19001dc171e2eb9c56962ca32478caaa7e39"),
+            hex!("1adc95bebe9eea8c112d40cd04ab7a8d75c4f961"),
+            hex!("2f5534ad9a790c9c9fab479a187dbf3f961aa294"),
         ];
         let temp_file = tempfile::tempfile().unwrap();
 
-        let mut file = DownloadFile::new_from_file(temp_file, hashes, 1024, 2048).unwrap();
+        let mut file = DownloadFile::new_from_file(temp_file, hashes, 65536, 131072).unwrap();
 
-        let (data2_0, data2_1) = data2.split_at(512);
+        let (data1_0, data1_1) = data1.split_at(32768);
+        let (data2_0, data2_1) = data2.split_at(32768);
 
-        let block1 = Block::new(0, 0, &data1[..]);
+        let block1_0 = Block::new(0, 0, &data1_0[..]);
+        let block1_1 = Block::new(0, 32768, &data1_1[..]);
         let block2_0 = Block::new(1, 0, &data2_0[..]);
-        let block2_1 = Block::new(1, 512, &data2_1[..]);
+        let block2_1 = Block::new(1, 32768, &data2_1[..]);
 
-        file.process_block(block1).unwrap();
+        file.process_block(block1_0).unwrap();
+        file.process_block(block1_1).unwrap();
         file.process_block(block2_0).unwrap();
+        assert!(file.pieces[0].is_complete());
         assert!(!file.pieces[1].is_complete());
         file.process_block(block2_1).unwrap();
+        eprintln!("{:?}", file.pieces[1].unfilled);
         assert!(file.pieces[0].is_complete());
         assert!(file.pieces[1].is_complete());
 
@@ -267,22 +312,8 @@ mod tests {
         file.file.seek(SeekFrom::Start(0)).unwrap();
 
         file.file.read_to_end(&mut buf).unwrap();
-        assert_eq!(buf[..1024], data1);
-        assert_eq!(buf[1024..], data2);
-    }
-
-    #[test]
-    fn file_one_piece_toobig() {
-        let data = vec![1; 1025];
-        let hashes = &[hex!("60cacbf3d72e1e7834203da608037b1bf83b40e8")];
-        let temp_file = tempfile::tempfile().unwrap();
-
-        let mut file = DownloadFile::new_from_file(temp_file, hashes, 1024, 1024).unwrap();
-
-        let block = Block::new(0, 0, &data[..]);
-
-        let res = file.process_block(block);
-        assert!(res.is_err());
+        assert_eq!(buf[..65536], data1);
+        assert_eq!(buf[65536..], data2);
     }
 
     #[test]
@@ -308,29 +339,37 @@ mod tests {
 
     #[test]
     fn file_two_piece_bitmap() {
-        let data1 = vec![0; 1024];
-        let data2 = vec![1; 1024];
+        let data1 = vec![0; 65536];
+        let data2 = vec![1; 65536];
         let hashes = &[
-            hex!("60cacbf3d72e1e7834203da608037b1bf83b40e8"),
-            hex!("376f19001dc171e2eb9c56962ca32478caaa7e39"),
+            hex!("1adc95bebe9eea8c112d40cd04ab7a8d75c4f961"),
+            hex!("2f5534ad9a790c9c9fab479a187dbf3f961aa294"),
         ];
         let temp_file = tempfile::tempfile().unwrap();
 
-        let mut file = DownloadFile::new_from_file(temp_file, hashes, 1024, 2048).unwrap();
+        let mut file = DownloadFile::new_from_file(temp_file, hashes, 65536, 131072).unwrap();
 
-        let (data2_0, data2_1) = data2.split_at(512);
+        let (data1_0, data1_1) = data1.split_at(32768);
+        let (data2_0, data2_1) = data2.split_at(32768);
 
-        let block1 = Block::new(0, 0, &data1[..]);
+        let block1_0 = Block::new(0, 0, &data1_0[..]);
+        let block1_1 = Block::new(0, 32768, &data1_1[..]);
         let block2_0 = Block::new(1, 0, &data2_0[..]);
-        let block2_1 = Block::new(1, 512, &data2_1[..]);
+        let block2_1 = Block::new(1, 32768, &data2_1[..]);
 
-        file.process_block(block1).unwrap();
-        assert_ne!(file.bitfield()[0] & 0x80, 0);
-        assert_eq!(file.bitfield()[0] & 0x40, 0);
-
+        file.process_block(block1_0).unwrap();
+        file.process_block(block1_1).unwrap();
         file.process_block(block2_0).unwrap();
+        assert_eq!(file.bitfield(), &[0x80]);
         file.process_block(block2_1).unwrap();
-        assert_ne!(file.bitfield()[0] & 0x80, 0);
-        assert_ne!(file.bitfield()[0] & 0x40, 0);
+        assert_eq!(file.bitfield(), &[0xc0]);
+
+        // check file contents
+        let mut buf = Vec::new();
+        file.file.seek(SeekFrom::Start(0)).unwrap();
+
+        file.file.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf[..65536], data1);
+        assert_eq!(buf[65536..], data2);
     }
 }
