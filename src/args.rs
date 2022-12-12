@@ -19,15 +19,15 @@ enum TrackerType {
 pub struct Args {
     /// Name of the torrent file to download
     #[arg(short, long)]
-    torrent: String,
+    pub torrent: String,
 
     /// Maximum number of peer connections to maintain
     #[arg(short, long, default_value_t = 10)]
-    max_connections: usize,
+    pub max_connections: usize,
 
     /// Port to listen on. Random if not provided
     #[arg(short, long)]
-    port: Option<u16>,
+    pub port: Option<u16>,
 
     // Force a specific tracker protocol to be used
     #[arg(short = 'r', long)]
