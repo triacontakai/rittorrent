@@ -8,26 +8,57 @@ mod timer;
 mod torrent;
 mod tracker;
 
-use anyhow::Result;
 use args::PEER_ID;
 use file::DownloadFile;
-use peers::connect_to_peer;
 use threads::Response;
 use tracker::{request, TrackerRequest};
 
+use std::net::{SocketAddr, TcpStream};
+use std::sync::mpsc::Sender;
 use std::{collections::HashMap, net::TcpListener, sync::mpsc};
+
+use anyhow::Result;
+use bitvec::prelude::*;
 
 use crate::args::{ARGS, METAINFO};
 use crate::peers::{spawn_peer_thread, PeerRequest};
 
 const DIGEST_SIZE: usize = 20;
 
+struct PeerInfo {
+    // channel to send to this peer
+    sender: Sender<PeerRequest>,
+
+    // basic state
+    choked: bool,
+    interested: bool,
+    peer_choked: bool,
+    peer_interested: bool,
+
+    // which pieces does this peer have?
+    has: BitVec<u8, Msb0>,
+}
+
+impl PeerInfo {
+    // Consumes a TcpStream, creates a new peer thread
+    fn new(peer: TcpStream, sender: Sender<Response>) -> Self {
+        Self {
+            sender: spawn_peer_thread(peer, sender),
+            choked: true,
+            interested: false,
+            peer_choked: true,
+            peer_interested: false,
+            has: bitvec![u8, Msb0; 0; METAINFO.info.pieces.len()],
+        }
+    }
+}
+
 fn main() -> Result<()> {
     // we do a little arg parsing
     lazy_static::initialize(&ARGS);
 
-    // map of addresses to channel senders
-    let mut peers = HashMap::new();
+    // map of addresses to peer structs
+    let mut peers: HashMap<SocketAddr, PeerInfo> = HashMap::new();
 
     // this is how each thread will communicate back with main thread
     let (tx, rx) = mpsc::channel();
@@ -59,7 +90,7 @@ fn main() -> Result<()> {
             my_port: ARGS.port.unwrap_or(5000),
             uploaded: 0,
             downloaded: 0,
-            left: todo!(),
+            left: 5000, // TODO
             event: Some(request::Event::Started),
         },
     };
@@ -73,10 +104,10 @@ fn main() -> Result<()> {
                 println!("{:?}", data.peer);
 
                 let addr = data.peer.peer_addr()?;
-                let peer_sender = spawn_peer_thread(data.peer, tx.clone());
-                peers.insert(addr, peer_sender.clone());
+                let peer_info = PeerInfo::new(data.peer, tx.clone());
+                peers.insert(addr, peer_info);
 
-                peer_sender.send(PeerRequest::GetInfo)?;
+                //peer_sender.send(PeerRequest::GetInfo)?;
             }
             Response::Peer(data) => {
                 println!("received response {:#?}", data);

@@ -26,7 +26,7 @@ enum MessageType {
 }
 
 #[derive(Debug, PartialEq)]
-enum Message {
+pub enum Message {
     Keepalive,
     Choke,
     Unchoke,
@@ -41,22 +41,12 @@ enum Message {
 
 #[derive(Debug)]
 pub enum PeerRequest {
-    GetInfo,
+    SendMessage(Message),
 }
 
 #[derive(Debug)]
 pub enum PeerResponse {
-    PeerInfo(PeerInfo),
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct PeerInfo {
-    // basic info
-    addr: SocketAddr,
-
-    // protocol options
-    choked: bool,
-    interested: bool,
+    MessageReceived(Message),
 }
 
 impl Message {
@@ -135,11 +125,6 @@ impl Message {
         let mut buf: Vec<u8> = vec![0; length - 1];
         reader.read_exact(&mut buf)?;
 
-        //let Some(&message_type) = buf.get(0) else {
-        //    // if we read nothing, this is a keepalive
-        //    return Ok(Self::Keepalive);
-        //};
-
         // Try to parse the message
         if message_type == MessageType::Choke as u8 {
             Ok(Self::Choke)
@@ -195,16 +180,6 @@ impl Message {
     }
 }
 
-impl PeerInfo {
-    fn new(addr: SocketAddr) -> Self {
-        Self {
-            addr: addr,
-            choked: true,
-            interested: false,
-        }
-    }
-}
-
 // lol
 pub fn connect_to_peer(peer: Peer) -> Result<TcpStream> {
     Ok(TcpStream::connect((peer.ip, peer.port))?)
@@ -238,9 +213,6 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
     let peer_addr = peer.peer_addr().expect("TcpStream not connected to peer");
 
     thread::spawn(move || {
-        // initially construct peer info
-        let info = PeerInfo::new(peer_addr);
-
         let mut reader = BufReader::new(peer.try_clone().expect("Failed to clone TcpStream"));
         let mut writer = BufWriter::new(peer.try_clone().expect("Failed to clone TcpStream"));
 
@@ -253,11 +225,7 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
 
             use PeerRequest::*;
             match req {
-                GetInfo => {
-                    sender
-                        .send(Response::Peer(PeerResponse::PeerInfo(info)))
-                        .expect("Peer thread could not respond to request");
-                }
+                _ => todo!(),
             }
         }
     });
