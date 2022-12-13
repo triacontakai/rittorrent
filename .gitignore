@@ -26,3 +26,7 @@
 
 # Downloaded files
 pg201.txt
+
+# pcap stuff
+*.pcap
+*.pcapng

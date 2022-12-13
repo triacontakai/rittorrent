@@ -23,9 +23,8 @@ pub mod response {
 
     #[derive(Serialize, Deserialize, PartialEq)]
     pub struct Peer {
-        #[serde(rename = "peer id", with = "serde_bytes")]
-        pub peer_id: Vec<u8>,
-
+        //#[serde(rename = "peer id", with = "serde_bytes")]
+        //pub peer_id: Vec<u8>,
         pub ip: String,
 
         pub port: u16,

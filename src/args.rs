@@ -1,11 +1,11 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
-use bendy::serde::from_bytes;
+use bendy::{serde::from_bytes, value::Value};
 use clap::{Parser, ValueEnum};
 use lazy_static::lazy_static;
 use rand::RngCore;
 
-use crate::torrent::MetaInfo;
+use crate::torrent::{Info, MetaInfo};
 
 #[derive(ValueEnum, Clone, Debug)]
 enum TrackerType {
@@ -48,7 +48,7 @@ lazy_static! {
     };
 
     // Parsed metainfo file
-    pub static ref METAINFO: MetaInfo = {
+    pub static ref METAINFO: MetaInfo<'static> = {
         let torrent_path = PathBuf::from(&ARGS.torrent);
         let mut torrent_file = File::open(torrent_path)
             .expect("Failed to open provided torrent file");
@@ -57,7 +57,29 @@ lazy_static! {
             .read_to_end(&mut result)
             .expect("Failed to read from provided torrent file");
 
-        from_bytes::<MetaInfo>(&result)
-            .expect("Failed to parse provided torrent file")
+        let metainfo = from_bytes::<MetaInfo>(&result)
+            .expect("Failed to parse provided torrent file");
+
+        let announce = metainfo.announce.clone();
+        let piece_length = metainfo.info.piece_length;
+        let pieces = metainfo.info.pieces.clone();
+        let name = metainfo.info.name.clone();
+        let length = metainfo.info.length;
+
+        let mut remaining = HashMap::new();
+        for (k, v) in metainfo.info.remaining.iter() {
+            remaining.insert(k.clone(), v.clone().into_owned());
+        }
+
+        MetaInfo {
+            announce,
+            info: Info {
+                piece_length,
+                pieces,
+                name,
+                length,
+                remaining,
+            }
+        }
     };
 }
