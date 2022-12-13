@@ -44,11 +44,11 @@ pub mod response {
     }
 }
 
-use std::sync::mpsc::{self, Sender};
-use std::thread::{self};
+use std::thread;
 
 use anyhow::{anyhow, Result};
 use bendy::serde::from_bytes;
+use crossbeam::channel::{self, Sender};
 
 use request::Request;
 use response::Response;
@@ -101,7 +101,7 @@ pub struct TrackerRequest {
 }
 
 pub fn spawn_tracker_thread(sender: Sender<threads::Response>) -> Sender<TrackerRequest> {
-    let (tx, rx) = mpsc::channel::<TrackerRequest>();
+    let (tx, rx) = channel::unbounded::<TrackerRequest>();
 
     thread::spawn(move || {
         // main loop for tracker-interaction thread

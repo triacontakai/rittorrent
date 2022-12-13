@@ -14,11 +14,11 @@ use threads::Response;
 use tracker::{request, TrackerRequest};
 
 use std::net::{SocketAddr, TcpStream};
-use std::sync::mpsc::Sender;
 use std::{collections::HashMap, net::TcpListener, sync::mpsc};
 
 use anyhow::Result;
 use bitvec::prelude::*;
+use crossbeam::channel::{self, Receiver, Sender};
 
 use crate::args::{ARGS, METAINFO};
 use crate::peers::{spawn_peer_thread, PeerRequest};
@@ -61,9 +61,9 @@ fn main() -> Result<()> {
     let mut peers: HashMap<SocketAddr, PeerInfo> = HashMap::new();
 
     // this is how each thread will communicate back with main thread
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = channel::unbounded();
 
-    let server = TcpListener::bind("0.0.0.0:5000")?;
+    let server = TcpListener::bind("0.0.0.0:5001")?;
     connections::spawn_accept_thread(server, tx.clone());
     let tracker_sender = tracker::spawn_tracker_thread(tx.clone());
 
@@ -82,21 +82,21 @@ fn main() -> Result<()> {
     )?;
 
     // send initial starting request
-    let tracker_req = TrackerRequest {
-        url: METAINFO.announce.clone(),
-        request: request::Request {
-            info_hash: METAINFO.info_hash(),
-            peer_id: *PEER_ID,
-            my_port: ARGS.port.unwrap_or(5000),
-            uploaded: 0,
-            downloaded: 0,
-            left: 5000, // TODO
-            event: Some(request::Event::Started),
-        },
-    };
-    tracker_sender
-        .send(tracker_req)
-        .expect("Failed to send request to tracker thread");
+    //let tracker_req = TrackerRequest {
+    //    url: METAINFO.announce.clone(),
+    //    request: request::Request {
+    //        info_hash: METAINFO.info_hash(),
+    //        peer_id: *PEER_ID,
+    //        my_port: ARGS.port.unwrap_or(5000),
+    //        uploaded: 0,
+    //        downloaded: 0,
+    //        left: 5000, // TODO
+    //        event: Some(request::Event::Started),
+    //    },
+    //};
+    //tracker_sender
+    //    .send(tracker_req)
+    //    .expect("Failed to send request to tracker thread");
 
     for resp in rx.iter() {
         match resp {
@@ -105,9 +105,11 @@ fn main() -> Result<()> {
 
                 let addr = data.peer.peer_addr()?;
                 let peer_info = PeerInfo::new(data.peer, tx.clone());
-                peers.insert(addr, peer_info);
+                let peer_info = peers.entry(addr).or_insert(peer_info);
 
-                //peer_sender.send(PeerRequest::GetInfo)?;
+                peer_info
+                    .sender
+                    .send(PeerRequest::SendMessage(peers::Message::Choke))?; // TODO; question mark?
             }
             Response::Peer(data) => {
                 println!("received response {:#?}", data);

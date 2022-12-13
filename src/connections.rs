@@ -1,7 +1,8 @@
 use crate::threads::Response;
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::Sender;
-use std::thread::{self, JoinHandle};
+use std::thread;
+
+use crossbeam::channel::Sender;
 
 pub struct ConnectionData {
     pub peer: TcpStream,

@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Result};
+use crossbeam::channel::{self, select, Select, Sender};
 use std::{
-    io::{BufReader, BufWriter, Read, Write},
+    io::{self, BufReader, BufWriter, Read, Write},
     net::{SocketAddr, TcpStream},
-    sync::mpsc::{self, Sender},
     thread,
+    time::Duration,
 };
 
 use crate::args::{METAINFO, PEER_ID};
@@ -11,6 +12,8 @@ use crate::threads::Response;
 use crate::tracker::response::Peer;
 
 const PROTO_IDENTIFIER: &str = "BitTorrent protocol";
+
+const TCP_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Copy, Clone)]
 enum MessageType {
@@ -47,6 +50,7 @@ pub enum PeerRequest {
 #[derive(Debug)]
 pub enum PeerResponse {
     MessageReceived(Message),
+    Heartbeat,
 }
 
 impl Message {
@@ -209,23 +213,94 @@ fn do_handshake(
 }
 
 pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<PeerRequest> {
-    let (tx, rx) = mpsc::channel();
-    let peer_addr = peer.peer_addr().expect("TcpStream not connected to peer");
+    let (tx, rx) = channel::unbounded();
+    let addr: SocketAddr = peer.peer_addr().expect("Peer is not connected!");
 
     thread::spawn(move || {
+        // set timeout for tcp stream
+        peer.set_read_timeout(Some(TCP_READ_TIMEOUT))
+            .expect("Failed to set read timeout on TcpStream");
+
+        let mut writer = BufWriter::new(peer.try_clone().expect("Failed to clone TcpStream")); // TODO: what if this fails? should tell main thread!
         let mut reader = BufReader::new(peer.try_clone().expect("Failed to clone TcpStream"));
-        let mut writer = BufWriter::new(peer.try_clone().expect("Failed to clone TcpStream"));
 
         // do the handshake
         do_handshake(&mut reader, &mut writer).expect("Failed to perform handshake");
         println!("Performed handshake!");
 
-        for req in rx {
-            println!("Received request: {:#?}", req);
+        // create receiving thread
+        let (s, r) = channel::unbounded();
+        thread::spawn(move || loop {
+            // TODO: send heartbeat messages
+            match Message::recv(&mut reader) {
+                Ok(msg) => {
+                    // send message back to main thread
+                    if s.send(PeerResponse::MessageReceived(msg)).is_err() {
+                        eprintln!("Received thread failed to send response to peer thread");
+                        return;
+                    }
+                }
+                Err(e) => {
+                    match e.downcast::<io::Error>() {
+                        Ok(t) => {
+                            // timeout; just continue
+                            if t.kind() != io::ErrorKind::WouldBlock {
+                                eprintln!("Received thread encountered I/O error: {}", t);
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            // unrecoverable error
+                            println!("Receiver thread encountered unknown error: {}", e);
+                            return;
+                        }
+                    }
 
-            use PeerRequest::*;
-            match req {
-                _ => todo!(),
+                    // send heartbeat to peer thread
+                    s
+                        .send(PeerResponse::Heartbeat)
+                        .expect("Receiver thread failed to send heartbeat to peer thread");
+                }
+            }
+        });
+
+        let mut sel = Select::new();
+        let main_thread_oper = sel.recv(&rx);
+        let recv_thread_oper = sel.recv(&r);
+
+        loop {
+            let oper = sel.select();
+            match oper.index() {
+                i if i == main_thread_oper => {
+                    let req = oper
+                        .recv(&rx)
+                        .expect("Peer thread failed to read from main thread channel");
+                    println!("req: {:?}", req);
+
+                    use PeerRequest::*;
+                    match req {
+                        SendMessage(msg) => {
+                            // send the message to the remote
+                            if let Err(e) = msg.send(&mut writer) {
+                                println!("Peer thread failed to send message to remote: {}", e);
+                                return;
+                            }
+                        }
+                    }
+                }
+                i if i == recv_thread_oper => {
+                    let Ok(resp) = oper.recv(&r) else {
+                        eprintln!("Peer thread failed to read from receiver thread channel");
+                        return;
+                    };
+                    println!("msg: {:?}", resp);
+
+                    // forward the message back to the main thread
+                    sender
+                        .send(Response::Peer(resp))
+                        .expect("Peer thread failed to write to channel");
+                }
+                _ => unreachable!(),
             }
         }
     });
