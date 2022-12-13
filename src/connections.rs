@@ -4,6 +4,7 @@ use std::thread;
 
 use crossbeam::channel::Sender;
 
+#[derive(Debug)]
 pub struct ConnectionData {
     pub peer: TcpStream,
 }

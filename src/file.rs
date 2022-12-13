@@ -14,6 +14,7 @@ use anyhow::{bail, Result};
 const DIGEST_SIZE: usize = 20;
 const BLOCK_SIZE: usize = 32768;
 
+#[derive(PartialEq)]
 pub struct BlockInfo {
     piece: usize,
     range: Range<usize>,

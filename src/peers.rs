@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use crossbeam::channel::{self, Select, Sender};
 use std::{
     io::{self, BufReader, BufWriter, Read, Write},
-    net::TcpStream,
+    net::{SocketAddr, TcpStream},
     thread,
     time::Duration,
 };
@@ -49,7 +49,7 @@ pub enum PeerRequest {
 
 #[derive(Debug)]
 pub enum PeerResponse {
-    MessageReceived(Message),
+    MessageReceived(SocketAddr, Message),
     Heartbeat,
     Death,
 }
@@ -217,6 +217,7 @@ fn do_handshake(
 
 pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<PeerRequest> {
     let (tx, rx) = channel::unbounded();
+    let addr = peer.peer_addr().expect("TcpStream not connected to peer!");
 
     thread::spawn(move || {
         // set timeout for tcp stream
@@ -239,7 +240,7 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
             match Message::recv(&mut reader) {
                 Ok(msg) => {
                     // send message back to main thread
-                    if s.send(PeerResponse::MessageReceived(msg)).is_err() {
+                    if s.send(PeerResponse::MessageReceived(addr, msg)).is_err() {
                         eprintln!("Received thread failed to send response to peer thread");
                         return;
                     }
@@ -291,15 +292,18 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
                     }
                 }
                 i if i == recv_thread_oper => {
+                    // TODO: for now, we only forward Message responses. Should we forward heartbeats/deaths?
                     let Ok(resp) = oper.recv(&r) else {
                         eprintln!("Peer thread failed to read from receiver thread channel");
                         return;
                     };
 
                     // forward the message back to the main thread
-                    sender
-                        .send(Response::Peer(resp))
-                        .expect("Peer thread failed to write to channel");
+                    if let PeerResponse::MessageReceived(_, _) = resp {
+                        sender
+                            .send(Response::Peer(resp))
+                            .expect("Peer thread failed to write to channel");
+                    }
                 }
                 _ => unreachable!(),
             }

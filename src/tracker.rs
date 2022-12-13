@@ -21,7 +21,7 @@ pub mod request {
 pub mod response {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    #[derive(Serialize, Deserialize, PartialEq)]
     pub struct Peer {
         #[serde(rename = "peer id", with = "serde_bytes")]
         pub peer_id: Vec<u8>,
@@ -41,6 +41,16 @@ pub mod response {
 
         #[serde(rename = "failure reason", default)]
         pub(super) failure_reason: String,
+    }
+
+    impl std::fmt::Debug for Peer {
+        // don't print peer_id since it's annoying
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("Peer")
+                .field("ip", &self.ip)
+                .field("port", &self.port)
+                .finish()
+        }
     }
 }
 
@@ -83,8 +93,15 @@ impl Request {
             ),
         ];
 
+        println!("hi1");
         let http_response = http_get(url, &query)?;
+        println!("hi2: {:?}", String::from_utf8_lossy(&http_response.content));
+
+        let mut file = std::fs::File::create("fuck you bram cohen.bin")?;
+        std::io::Write::write_all(&mut file, &http_response.content)?;
+
         let tracker_response = from_bytes::<Response>(&http_response.content)?;
+        println!("hi3");
 
         if tracker_response.interval == 0 {
             Err(anyhow!(tracker_response.failure_reason))

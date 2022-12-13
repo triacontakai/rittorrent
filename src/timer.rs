@@ -10,8 +10,9 @@ use crossbeam::channel::{self, Sender};
 
 pub type Token = u64;
 
+#[derive(Debug)]
 pub struct TimerResponse {
-    id: Token,
+    pub id: Token,
 }
 
 pub struct TimerRequest {
