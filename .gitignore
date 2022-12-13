@@ -23,3 +23,6 @@
 
 # Temporary LaTeX documents
 */*.pdf
+
+# Downloaded files
+pg201.txt
