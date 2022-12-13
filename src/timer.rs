@@ -1,11 +1,12 @@
 use std::{
     collections::BinaryHeap,
-    sync::mpsc::{self, Sender},
     thread,
     time::{Duration, Instant},
 };
 
 use crate::threads::{self, Response};
+
+use crossbeam::channel::{self, Sender};
 
 pub type Token = u64;
 
@@ -28,7 +29,7 @@ struct Timer {
 }
 
 pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequest> {
-    let (tx, rx) = mpsc::channel::<TimerRequest>();
+    let (tx, rx) = channel::unbounded::<TimerRequest>();
 
     thread::spawn(move || {
         let mut timers = BinaryHeap::new();
@@ -91,18 +92,17 @@ pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequ
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::mpsc,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
     use crate::threads;
+
+    use crossbeam::channel;
 
     use super::{spawn_timer_thread, TimerRequest};
 
     #[test]
     fn timer_thread_basic() {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = channel::unbounded();
 
         let timer_sender = spawn_timer_thread(sender);
 

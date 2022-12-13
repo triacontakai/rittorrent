@@ -14,11 +14,16 @@ use anyhow::{bail, Result};
 const DIGEST_SIZE: usize = 20;
 const BLOCK_SIZE: usize = 32768;
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct Block<'a> {
+pub struct BlockInfo {
+    piece: usize,
+    range: Range<usize>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct Block {
     piece: usize,
     offset: usize,
-    data: &'a [u8],
+    data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -35,15 +40,21 @@ pub struct DownloadFile {
     pieces: Vec<Piece>,
     bitfield: BitVec<u8, Msb0>,
     file: File,
-    piece_size: usize,
 }
 
-impl<'a> Block<'a> {
-    pub fn new(piece: usize, offset: usize, data: &'a [u8]) -> Self {
+impl Block {
+    pub fn new(piece: usize, offset: usize, data: &[u8]) -> Self {
         Block {
             piece,
             offset,
-            data,
+            data: data.to_vec(),
+        }
+    }
+
+    pub fn info(&self) -> BlockInfo {
+        BlockInfo {
+            piece: self.piece,
+            range: self.offset..(self.offset + self.data.len()),
         }
     }
 }
@@ -127,7 +138,6 @@ impl DownloadFile {
             pieces,
             bitfield: bitvec![u8, Msb0; 0; num_pieces],
             file,
-            piece_size,
         })
     }
 
@@ -167,7 +177,7 @@ impl DownloadFile {
         // seek to position in file and write this block, since by this point we know it is unfilled
         self.file
             .seek(SeekFrom::Start((range.start + piece.offset) as u64))?;
-        self.file.write_all(block.data)?;
+        self.file.write_all(&block.data[..])?;
 
         // this block now counts as filled, so remove from unfilled
         piece.unfilled.swap_remove(idx);

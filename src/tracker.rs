@@ -106,8 +106,6 @@ pub fn spawn_tracker_thread(sender: Sender<threads::Response>) -> Sender<Tracker
     thread::spawn(move || {
         // main loop for tracker-interaction thread
         for req in rx {
-            println!("Tracker thread received request {:#?}", req);
-
             let result = req.request.send(&req.url);
             sender.send(threads::Response::Tracker(result)).expect("hi");
         }

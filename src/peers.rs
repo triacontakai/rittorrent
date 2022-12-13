@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
-use crossbeam::channel::{self, select, Select, Sender};
+use crossbeam::channel::{self, Select, Sender};
 use std::{
     io::{self, BufReader, BufWriter, Read, Write},
-    net::{SocketAddr, TcpStream},
+    net::TcpStream,
     thread,
     time::Duration,
 };
@@ -51,6 +51,7 @@ pub enum PeerRequest {
 pub enum PeerResponse {
     MessageReceived(Message),
     Heartbeat,
+    Death,
 }
 
 impl Message {
@@ -212,9 +213,10 @@ fn do_handshake(
     Ok(())
 }
 
+// GIANT TODO: handle thread deaths!
+
 pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<PeerRequest> {
     let (tx, rx) = channel::unbounded();
-    let addr: SocketAddr = peer.peer_addr().expect("Peer is not connected!");
 
     thread::spawn(move || {
         // set timeout for tcp stream
@@ -225,8 +227,10 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
         let mut reader = BufReader::new(peer.try_clone().expect("Failed to clone TcpStream"));
 
         // do the handshake
-        do_handshake(&mut reader, &mut writer).expect("Failed to perform handshake");
-        println!("Performed handshake!");
+        if do_handshake(&mut reader, &mut writer).is_err() {
+            eprintln!("Failed to perform handshake!");
+            return;
+        }
 
         // create receiving thread
         let (s, r) = channel::unbounded();
@@ -257,8 +261,7 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
                     }
 
                     // send heartbeat to peer thread
-                    s
-                        .send(PeerResponse::Heartbeat)
+                    s.send(PeerResponse::Heartbeat)
                         .expect("Receiver thread failed to send heartbeat to peer thread");
                 }
             }
@@ -275,7 +278,6 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
                     let req = oper
                         .recv(&rx)
                         .expect("Peer thread failed to read from main thread channel");
-                    println!("req: {:?}", req);
 
                     use PeerRequest::*;
                     match req {
@@ -293,7 +295,6 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
                         eprintln!("Peer thread failed to read from receiver thread channel");
                         return;
                     };
-                    println!("msg: {:?}", resp);
 
                     // forward the message back to the main thread
                     sender
