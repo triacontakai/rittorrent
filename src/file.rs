@@ -161,12 +161,24 @@ impl DownloadFile {
         self.pieces.get(piece).map(|x| &x.unfilled[..])
     }
 
+    pub fn piece_is_complete(&self, piece: usize) -> Result<bool> {
+        let Some(piece) = self.pieces.get(piece) else {
+            bail!("invalid piece index");
+        };
+
+        Ok(piece.is_complete())
+    }
+
     /// Returns the bytes matching the given [BlockInfo]
     /// Returns [None] if the passed [BlockInfo] does not exist
     pub fn get_block(&mut self, block: BlockInfo) -> Result<Vec<u8>> {
         let Some(piece) = self.pieces.get(block.piece) else {
             bail!("invalid piece index");
         };
+
+        if !piece.is_complete() {
+            bail!("piece is not complete");
+        }
 
         let range = 0..piece.length;
         if range.start < block.range.start || range.end > block.range.end {
