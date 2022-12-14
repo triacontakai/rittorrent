@@ -92,15 +92,8 @@ impl Request {
             ),
         ];
 
-        println!("hi1");
         let http_response = http_get(url, &query)?;
-        println!("hi2: {:?}", String::from_utf8_lossy(&http_response.content));
-
-        let mut file = std::fs::File::create("fuck you bram cohen.bin")?;
-        std::io::Write::write_all(&mut file, &http_response.content)?;
-
         let tracker_response = from_bytes::<Response>(&http_response.content)?;
-        println!("hi3");
 
         if tracker_response.interval == 0 {
             Err(anyhow!(tracker_response.failure_reason))

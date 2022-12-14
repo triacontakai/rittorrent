@@ -291,7 +291,7 @@ fn main() -> Result<()> {
             let msg = PeerRequest::SendMessage(Message::Request(
                 block.piece as u32,
                 block.range.start as u32,
-                block.range.end as u32,
+                (block.range.end - block.range.start) as u32,
             ));
             println!("Peer {:?}: sent Request: {:?}", addr, msg);
             if peer_info.sender.send(msg).is_err() {
