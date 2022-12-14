@@ -181,7 +181,7 @@ impl DownloadFile {
         }
 
         let range = 0..piece.length;
-        if range.start < block.range.start || range.end > block.range.end {
+        if block.range.start < range.start || block.range.end > range.end {
             bail!("block range invalid");
         }
 
