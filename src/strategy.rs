@@ -8,7 +8,7 @@ use crate::{
 };
 
 // TODO: this should be a cmdline argument
-const PIPELINE_DEPTH: usize = 3;
+const PIPELINE_DEPTH: usize = 10;
 
 //pub trait BlockStrategy {
 //    fn pick_blocks(state: MainState) -> Vec<(file::BlockInfo, SocketAddr)>;
