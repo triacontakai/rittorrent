@@ -151,9 +151,28 @@ impl DownloadFile {
     }
 
     /// Return a `Some(&[Range<usize])` containing all the unfilled ranges for the given piece
-    /// Returns `None` if `piece` is out of bounds
+    /// Returns [None] if `piece` is out of bounds
     pub fn get_blocks(&self, piece: usize) -> Option<&[Range<usize>]> {
         self.pieces.get(piece).map(|x| &x.unfilled[..])
+    }
+
+    /// Returns the bytes matching the given [BlockInfo]
+    /// Returns [None] if the passed [BlockInfo] does not exist
+    pub fn get_block(&mut self, block: BlockInfo) -> Result<Vec<u8>> {
+        let Some(piece) = self.pieces.get(block.piece) else {
+            bail!("invalid piece index");
+        };
+
+        let range = 0..piece.length;
+        if range.start < block.range.start || range.end > block.range.end {
+            bail!("block range invalid");
+        }
+
+        let mut data = vec![0u8; block.range.end - block.range.start];
+        self.file.seek(SeekFrom::Start((piece.offset + block.range.start) as u64))?;
+        self.file.read_exact(&mut data)?;
+
+        Ok(data)
     }
 
     /// Pass a block to the DownloadFile in order to be processed
@@ -218,6 +237,8 @@ mod tests {
 
     use hex_literal::hex;
     use tempfile;
+
+    use crate::file::BlockInfo;
 
     use super::{get_block_ranges, Block, DownloadFile};
 
@@ -388,5 +409,26 @@ mod tests {
         file.file.read_to_end(&mut buf).unwrap();
         assert_eq!(buf[..65536], data1);
         assert_eq!(buf[65536..], data2);
+    }
+
+    #[test]
+    fn file_get_block_success() {
+        let data = vec![0; 1024];
+        let hashes = &[hex!("60cacbf3d72e1e7834203da608037b1bf83b40e8")];
+        let temp_file = tempfile::tempfile().unwrap();
+
+        let mut file = DownloadFile::new_from_file(temp_file, hashes, 1024, data.len()).unwrap();
+
+        let block = Block::new(0, 0, &data[..]);
+
+        file.process_block(block).unwrap();
+        assert!(file.pieces[0].is_complete());
+
+        // check file contents
+        let buf = file.get_block(BlockInfo {
+            piece: 0,
+            range: 0..1024,
+        }).unwrap();
+        assert_eq!(buf, data);
     }
 }
