@@ -16,9 +16,9 @@ pub struct TimerResponse {
 }
 
 pub struct TimerRequest {
-    timer_len: Duration,
-    id: Token,
-    repeat: bool,
+    pub timer_len: Duration,
+    pub id: Token,
+    pub repeat: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]

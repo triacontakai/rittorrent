@@ -14,10 +14,10 @@ use anyhow::{bail, Result};
 const DIGEST_SIZE: usize = 20;
 const BLOCK_SIZE: usize = 32768;
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct BlockInfo {
-    piece: usize,
-    range: Range<usize>,
+    pub piece: usize,
+    pub range: Range<usize>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -151,7 +151,7 @@ impl DownloadFile {
     }
 
     /// Return a `Some(&[Range<usize])` containing all the unfilled ranges for the given piece
-    /// Returns `None` if `idx` is out of bounds
+    /// Returns `None` if `piece` is out of bounds
     pub fn get_blocks(&self, piece: usize) -> Option<&[Range<usize>]> {
         self.pieces.get(piece).map(|x| &x.unfilled[..])
     }
