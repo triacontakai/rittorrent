@@ -12,7 +12,7 @@ use sha1::{Digest, Sha1};
 use anyhow::{bail, Result};
 
 const DIGEST_SIZE: usize = 20;
-const BLOCK_SIZE: usize = 32768;
+const BLOCK_SIZE: usize = 16384;
 
 #[derive(Debug, PartialEq)]
 pub struct BlockInfo {
