@@ -78,6 +78,17 @@ pub struct MainState {
     pub requested: HashMap<timer::Token, (file::BlockInfo, SocketAddr)>,
 }
 
+fn broadcast_has(state: &mut MainState, piece: usize) {
+    // Send over every channel
+    for peer_info in state.peers.values() {
+        let msg = PeerRequest::SendMessage(Message::Have(piece as u32));
+        if peer_info.sender.send(msg).is_err() {
+            // TODO: this should kill the peer also (maybe helper for that?)
+            eprintln!("broadcast_has() noticed that peer should die");
+        }
+    }
+}
+
 fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()> {
     let PeerResponse::MessageReceived(addr, msg) = resp else {
         println!("handle_peer_response(): received unhandled response type");
@@ -101,6 +112,7 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             peer_info.peer_choked = false;
         }
         Interested => {
+            println!("Peer {:?} is interested in us", addr);
             peer_info.peer_interested = true;
         }
         NotInterested => {
@@ -128,8 +140,7 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
         Piece(piece, offset, data) => {
             let block = Block::new(piece as usize, offset as usize, &data);
 
-            println!("YOOO OMG OMG I GOT A PIECE YOO NO WAY FR???");
-            println!(" --> piece info: {:?}", block.info());
+            //println!(" --> piece info: {:?}", block.info());
 
             // remove request from the queue
             if state.requested.remove_value((block.info(), addr)) {
@@ -140,12 +151,21 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             } else {
                 eprintln!("Peer {:?} send Piece we did not request", addr);
             }
+
+            // did we just finish processing the piece?
+            if let Ok(true) = state.file.piece_is_complete(piece as usize) {
+                // broadcast to every peer that we have this piece
+                broadcast_has(state, piece as usize);
+            }
         }
         Request(piece, offset, length) => {
+            println!("I GOT A REQUEST");
+
             let block_info = BlockInfo {
                 piece: piece as usize,
                 range: (offset as usize)..(offset as usize + length as usize),
             };
+            println!(" --> request info: {:?}", block_info);
 
             // ignore request if we're choking this peer
             if peer_info.choked {
@@ -301,6 +321,12 @@ fn main() -> Result<()> {
             }
         }
 
+        // Am I done?
+        if state.file.is_complete() {
+            println!("File download complete!");
+            return Ok(());
+        }
+
         // TODO: move this into a helper function
         // after handling event, refill pipelines
         let requests = strategy::pick_blocks(&state);
@@ -316,7 +342,7 @@ fn main() -> Result<()> {
                 block.range.start as u32,
                 (block.range.end - block.range.start) as u32,
             ));
-            println!("Peer {:?}: sent Request: {:?}", addr, msg);
+            //println!("Peer {:?}: sent Request: {:?}", addr, msg);
             if peer_info.sender.send(msg).is_err() {
                 println!(
                     "Main: peer {:?} appears to have died. Removing from peer context map...",
