@@ -155,6 +155,11 @@ impl DownloadFile {
         self.bitfield.as_raw_slice()
     }
 
+    // Return a copy of our current BitVec
+    pub fn bitvec(&self) -> &BitVec<u8, Msb0> {
+        &self.bitfield
+    }
+
     /// Return a `Some(&[Range<usize])` containing all the unfilled ranges for the given piece
     /// Returns [None] if `piece` is out of bounds
     pub fn get_unfilled(&self, piece: usize) -> Option<&[Range<usize>]> {
@@ -256,7 +261,7 @@ mod tests {
     use hex_literal::hex;
     use tempfile;
 
-    use crate::file::BlockInfo;
+    use crate::file::{BlockInfo, BLOCK_SIZE};
 
     use super::{get_block_ranges, Block, DownloadFile};
 
@@ -335,23 +340,23 @@ mod tests {
 
     #[test]
     fn file_two_piece_partial_success() {
-        let data1 = vec![0; 65536];
-        let data2 = vec![1; 65536];
+        let data1 = vec![0; BLOCK_SIZE * 2];
+        let data2 = vec![1; BLOCK_SIZE * 2];
         let hashes = &[
-            hex!("1adc95bebe9eea8c112d40cd04ab7a8d75c4f961"),
-            hex!("2f5534ad9a790c9c9fab479a187dbf3f961aa294"),
+            hex!("5188431849b4613152fd7bdba6a3ff0a4fd6424b"),
+            hex!("d3a26f5cc20679c826302154ccd89edd238cfaca"),
         ];
         let temp_file = tempfile::tempfile().unwrap();
 
-        let mut file = DownloadFile::new_from_file(temp_file, hashes, 65536, 131072).unwrap();
+        let mut file = DownloadFile::new_from_file(temp_file, hashes, BLOCK_SIZE * 2, BLOCK_SIZE * 4).unwrap();
 
-        let (data1_0, data1_1) = data1.split_at(32768);
-        let (data2_0, data2_1) = data2.split_at(32768);
+        let (data1_0, data1_1) = data1.split_at(BLOCK_SIZE);
+        let (data2_0, data2_1) = data2.split_at(BLOCK_SIZE);
 
         let block1_0 = Block::new(0, 0, &data1_0[..]);
-        let block1_1 = Block::new(0, 32768, &data1_1[..]);
+        let block1_1 = Block::new(0, BLOCK_SIZE, &data1_1[..]);
         let block2_0 = Block::new(1, 0, &data2_0[..]);
-        let block2_1 = Block::new(1, 32768, &data2_1[..]);
+        let block2_1 = Block::new(1, BLOCK_SIZE, &data2_1[..]);
 
         file.process_block(block1_0).unwrap();
         file.process_block(block1_1).unwrap();
@@ -368,8 +373,8 @@ mod tests {
         file.file.seek(SeekFrom::Start(0)).unwrap();
 
         file.file.read_to_end(&mut buf).unwrap();
-        assert_eq!(buf[..65536], data1);
-        assert_eq!(buf[65536..], data2);
+        assert_eq!(buf[..BLOCK_SIZE * 2], data1);
+        assert_eq!(buf[BLOCK_SIZE * 2..], data2);
     }
 
     #[test]
@@ -395,23 +400,24 @@ mod tests {
 
     #[test]
     fn file_two_piece_bitmap() {
-        let data1 = vec![0; 65536];
-        let data2 = vec![1; 65536];
+        let data1 = vec![0; BLOCK_SIZE * 2];
+        let data2 = vec![1; BLOCK_SIZE * 2];
         let hashes = &[
-            hex!("1adc95bebe9eea8c112d40cd04ab7a8d75c4f961"),
-            hex!("2f5534ad9a790c9c9fab479a187dbf3f961aa294"),
+            hex!("5188431849b4613152fd7bdba6a3ff0a4fd6424b"),
+            hex!("d3a26f5cc20679c826302154ccd89edd238cfaca"),
         ];
         let temp_file = tempfile::tempfile().unwrap();
 
-        let mut file = DownloadFile::new_from_file(temp_file, hashes, 65536, 131072).unwrap();
+        let mut file =
+            DownloadFile::new_from_file(temp_file, hashes, BLOCK_SIZE * 2, BLOCK_SIZE * 4).unwrap();
 
-        let (data1_0, data1_1) = data1.split_at(32768);
-        let (data2_0, data2_1) = data2.split_at(32768);
+        let (data1_0, data1_1) = data1.split_at(16384);
+        let (data2_0, data2_1) = data2.split_at(16384);
 
         let block1_0 = Block::new(0, 0, &data1_0[..]);
-        let block1_1 = Block::new(0, 32768, &data1_1[..]);
+        let block1_1 = Block::new(0, BLOCK_SIZE, &data1_1[..]);
         let block2_0 = Block::new(1, 0, &data2_0[..]);
-        let block2_1 = Block::new(1, 32768, &data2_1[..]);
+        let block2_1 = Block::new(1, BLOCK_SIZE, &data2_1[..]);
 
         file.process_block(block1_0).unwrap();
         file.process_block(block1_1).unwrap();
@@ -425,8 +431,8 @@ mod tests {
         file.file.seek(SeekFrom::Start(0)).unwrap();
 
         file.file.read_to_end(&mut buf).unwrap();
-        assert_eq!(buf[..65536], data1);
-        assert_eq!(buf[65536..], data2);
+        assert_eq!(buf[..BLOCK_SIZE * 2], data1);
+        assert_eq!(buf[BLOCK_SIZE * 2..], data2);
     }
 
     #[test]

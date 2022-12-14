@@ -18,6 +18,8 @@ use timer::{spawn_timer_thread, TimerRequest};
 use tracker::{request, TrackerRequest};
 
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::ops::BitXor;
+use std::process;
 use std::time::Duration;
 use std::{collections::HashMap, net::TcpListener};
 
@@ -60,7 +62,7 @@ impl PeerInfo {
         let piece_count = METAINFO.info.pieces.chunks_exact(DIGEST_SIZE).len();
         Self {
             sender: spawn_peer_thread(peer, sender),
-            choked: true,
+            choked: false,
             interested: false,
             peer_choked: true,
             peer_interested: false,
@@ -79,14 +81,35 @@ pub struct MainState {
 }
 
 fn broadcast_has(state: &mut MainState, piece: usize) {
-    // Send over every channel
-    for peer_info in state.peers.values() {
+    println!("Sending Has for piece {:?}", piece);
+    state.peers.retain(|&addr, peer_info| {
         let msg = PeerRequest::SendMessage(Message::Have(piece as u32));
         if peer_info.sender.send(msg).is_err() {
-            // TODO: this should kill the peer also (maybe helper for that?)
-            eprintln!("broadcast_has() noticed that peer should die");
+            println!(
+                "Main: peer {:?} appears to have died. Removing from peer context map...",
+                addr
+            );
+            return false;
         }
+        true
+    });
+}
+
+fn rescan_interest(my_has: &BitVec<u8, Msb0>, peer_info: &mut PeerInfo) -> Result<()> {
+    let interested = peer_info.has.iter().zip(my_has).any(|(p, s)| *p && !*s);
+    if interested != peer_info.interested {
+        peer_info.interested = interested;
+
+        // Tell the peer about this change
+        let msg = PeerRequest::SendMessage(if interested {
+            Message::Interested
+        } else {
+            Message::NotInterested
+        });
+        peer_info.sender.send(msg)?;
     }
+
+    Ok(())
 }
 
 fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()> {
@@ -98,7 +121,7 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
     let peer_info = state
         .peers
         .get_mut(&addr)
-        .expect("Main thread has no context for peer");
+        .expect(&format!("Main thread has no context for peer {:?}", addr));
 
     use peers::Message::*;
     match msg {
@@ -119,33 +142,46 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             peer_info.peer_interested = false;
         }
         Have(piece) => {
-            if let Some(mut idx) = peer_info.has.get_mut(piece as usize) {
+            let piece = piece as usize;
+            if let Some(mut idx) = peer_info.has.get_mut(piece) {
                 *idx = true;
             } else {
                 eprintln!("Peer {:?} sent Have with invalid piece", addr);
+            }
+
+            // Update my interested status
+            // baaaa this is really bad
+            if !peer_info.interested {
+                if let Some(idx) = state.file.bitvec().get(piece) {
+                    if !*idx {
+                        peer_info.interested = true;
+                        let msg = PeerRequest::SendMessage(Message::Interested);
+                        peer_info.sender.send(msg)?;
+                    }
+                }
             }
         }
         Bitfield(bytes) => {
             if bytes.len() == peer_info.has.as_raw_slice().len() {
                 peer_info.has = BitVec::from_slice(&bytes);
+
+                // Update my interested status
+                rescan_interest(state.file.bitvec(), peer_info)?;
             } else {
                 eprintln!("Peer {:?} sent Bitfield with invalid length", addr);
-                eprintln!(
-                    " --> sent len={:?}, expected len={:?}",
-                    bytes.len(),
-                    peer_info.has.as_raw_slice().len()
-                );
             }
         }
         Piece(piece, offset, data) => {
             let block = Block::new(piece as usize, offset as usize, &data);
 
-            //println!(" --> piece info: {:?}", block.info());
-
             // remove request from the queue
             if state.requested.remove_value((block.info(), addr)) {
                 // process the block
-                if let Err(e) = state.file.process_block(block) {
+                let result = state.file.process_block(block);
+                if let Ok(_) = result {
+                    // keep statistics
+                    peer_info.uploaded += data.len();
+                } else if let Err(e) = result {
                     eprintln!("Failed to process piece from peer {:?}: {:?}", addr, e);
                 }
             } else {
@@ -171,9 +207,13 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             if peer_info.choked {
                 eprintln!("Warning: Peer {:?} made request while choked", addr);
             } else {
-                let Ok(data) = state.file.get_block(block_info) else {
+                let stuff = state.file.get_block(block_info);
+                let Ok(data) = stuff else {
                     bail!("Peer {:?} made Request for piece we do not have", addr);
                 };
+
+                // keep statistics
+                peer_info.downloaded += data.len();
 
                 // send a Piece response
                 let msg = PeerRequest::SendMessage(Message::Piece(piece, offset, data));
@@ -287,10 +327,14 @@ fn main() -> Result<()> {
             .sender
             .send(msg)
             .expect("Main failed to communicate with newly-created peer thread");
+
+        // TODO: delete this
+        let msg = PeerRequest::SendMessage(Message::Unchoke);
+        peer_info.sender.send(msg).expect("fuck you");
     }
 
     // Start listening
-    let server = TcpListener::bind("0.0.0.0:5001")?;
+    let server = TcpListener::bind("0.0.0.0:5000")?;
     connections::spawn_accept_thread(server, tx.clone());
 
     // Main loop
@@ -303,9 +347,14 @@ fn main() -> Result<()> {
                 let peer_info = PeerInfo::new(data.peer, tx.clone());
                 let peer_info = state.peers.entry(addr).or_insert(peer_info);
 
+                // Send the new peer our current bitmap
+                let bytes = state.file.bitfield().to_vec();
+                let msg = PeerRequest::SendMessage(Message::Bitfield(bytes));
+                peer_info.sender.send(msg)?;
+
                 peer_info
                     .sender
-                    .send(PeerRequest::SendMessage(peers::Message::Choke))?; // TODO; question mark?
+                    .send(PeerRequest::SendMessage(peers::Message::Unchoke))?; // TODO; question mark?
             }
             Response::Peer(data) => {
                 handle_peer_response(&mut state, data)?;
@@ -322,9 +371,9 @@ fn main() -> Result<()> {
         }
 
         // Am I done?
-        if state.file.is_complete() {
+        if state.file.is_complete() && !ARGS.seed {
             println!("File download complete!");
-            return Ok(());
+            process::exit(0); // TODO: tell the tracker we're done
         }
 
         // TODO: move this into a helper function
@@ -358,6 +407,7 @@ fn main() -> Result<()> {
                 id,
                 repeat: false,
             };
+            // TODO: i think timer is broken and sometimes sends repeat even when we didnt ask.
             state
                 .timer_sender
                 .send(timer_req)
@@ -367,6 +417,8 @@ fn main() -> Result<()> {
             state.requested.insert(id, (block, addr));
         }
     }
+
+    println!("Exited from main loop");
 
     Ok(())
 }

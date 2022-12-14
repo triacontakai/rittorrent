@@ -8,7 +8,7 @@ use rand::RngCore;
 use crate::torrent::{Info, MetaInfo};
 
 #[derive(ValueEnum, Clone, Debug)]
-enum TrackerType {
+pub enum TrackerType {
     Http,
     Udp,
 }
@@ -29,9 +29,13 @@ pub struct Args {
     #[arg(short, long)]
     pub port: Option<u16>,
 
-    // Force a specific tracker protocol to be used
+    /// Force a specific tracker protocol to be used
     #[arg(short = 'r', long)]
-    tracker_type: TrackerType,
+    pub tracker_type: TrackerType,
+
+    /// Continue seeding after file has been downloaded
+    #[arg(short, long, default_value_t = false)]
+    pub seed: bool,
 }
 
 const PEER_ID_LEN: usize = 20;
