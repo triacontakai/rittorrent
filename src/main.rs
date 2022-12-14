@@ -128,8 +128,8 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             // remove request from the queue
             if state.requested.remove_value((block.info(), addr)) {
                 // process the block
-                if state.file.process_block(block).is_err() {
-                    eprintln!("Failed to process piece from peer {:?}", addr);
+                if let Err(e) = state.file.process_block(block) {
+                    eprintln!("Failed to process piece from peer {:?}: {:?}", addr, e);
                 }
             } else {
                 eprintln!("Peer {:?} send Piece we did not request", addr);

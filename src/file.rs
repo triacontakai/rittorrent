@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fs::File,
+    fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     ops::{IndexMut, Range},
     path::Path,
@@ -90,7 +90,7 @@ impl DownloadFile {
         piece_size: usize,
         total_size: usize,
     ) -> Result<Self> {
-        let file = File::create(file_name)?;
+        let file = OpenOptions::new().read(true).write(true).truncate(true).create(true).open(file_name)?;
 
         Self::new_from_file(file, hashes, piece_size, total_size)
     }
