@@ -90,7 +90,12 @@ impl DownloadFile {
         piece_size: usize,
         total_size: usize,
     ) -> Result<Self> {
-        let file = OpenOptions::new().read(true).write(true).truncate(true).create(true).open(file_name)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(file_name)?;
 
         Self::new_from_file(file, hashes, piece_size, total_size)
     }
@@ -152,7 +157,7 @@ impl DownloadFile {
 
     /// Return a `Some(&[Range<usize])` containing all the unfilled ranges for the given piece
     /// Returns [None] if `piece` is out of bounds
-    pub fn get_blocks(&self, piece: usize) -> Option<&[Range<usize>]> {
+    pub fn get_unfilled(&self, piece: usize) -> Option<&[Range<usize>]> {
         self.pieces.get(piece).map(|x| &x.unfilled[..])
     }
 
@@ -169,7 +174,8 @@ impl DownloadFile {
         }
 
         let mut data = vec![0u8; block.range.end - block.range.start];
-        self.file.seek(SeekFrom::Start((piece.offset + block.range.start) as u64))?;
+        self.file
+            .seek(SeekFrom::Start((piece.offset + block.range.start) as u64))?;
         self.file.read_exact(&mut data)?;
 
         Ok(data)
@@ -425,10 +431,12 @@ mod tests {
         assert!(file.pieces[0].is_complete());
 
         // check file contents
-        let buf = file.get_block(BlockInfo {
-            piece: 0,
-            range: 0..1024,
-        }).unwrap();
+        let buf = file
+            .get_block(BlockInfo {
+                piece: 0,
+                range: 0..1024,
+            })
+            .unwrap();
         assert_eq!(buf, data);
     }
 }

@@ -18,7 +18,6 @@ use timer::{spawn_timer_thread, TimerRequest};
 use tracker::{request, TrackerRequest};
 
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::ops::Range;
 use std::time::Duration;
 use std::{collections::HashMap, net::TcpListener};
 
@@ -49,6 +48,10 @@ pub struct PeerInfo {
 
     // which pieces does this peer have?
     pub has: BitVec<u8, Msb0>,
+
+    // statistics (and their distributions)
+    pub uploaded: usize,
+    pub downloaded: usize,
 }
 
 impl PeerInfo {
@@ -62,6 +65,8 @@ impl PeerInfo {
             peer_choked: true,
             peer_interested: false,
             has: bitvec![u8, Msb0; 0; piece_count],
+            uploaded: 0,
+            downloaded: 0,
         }
     }
 }
@@ -88,6 +93,7 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
     match msg {
         Choke => {
             // when we receive choke we should remove all requests from "requested" queue for this peer
+            println!("Peer {:?} has choked us", addr);
             peer_info.peer_choked = true;
         }
         Unchoke => {
@@ -135,10 +141,25 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
                 eprintln!("Peer {:?} send Piece we did not request", addr);
             }
         }
+        Request(piece, offset, length) => {
+            let block_info = BlockInfo {
+                piece: piece as usize,
+                range: (offset as usize)..(offset as usize + length as usize),
+            };
 
-        // ignore requests for now because andrei's "totally finished" file subsystem
-        // doesn't have a way to read a block from the file....
-        Request(_, _, _) => (),
+            // ignore request if we're choking this peer
+            if peer_info.choked {
+                eprintln!("Warning: Peer {:?} made request while choked", addr);
+            } else {
+                let Ok(data) = state.file.get_block(block_info) else {
+                    bail!("Peer {:?} made Request for piece we do not have", addr);
+                };
+
+                // send a Piece response
+                let msg = PeerRequest::SendMessage(Message::Piece(piece, offset, data));
+                peer_info.sender.send(msg)?;
+            }
+        }
         Cancel(_, _, _) => (),
 
         // ignore keepalives for now (we do our own timeouts)
@@ -285,7 +306,9 @@ fn main() -> Result<()> {
         let requests = strategy::pick_blocks(&state);
         //println!("SHOULD MAKE REQUESTS FOR: {:#?}", stuff);
         for (block, addr) in requests {
-            let peer_info = state.peers.get(&addr).unwrap();
+            let Some(peer_info) = state.peers.get(&addr) else {
+                continue;
+            };
 
             // Try to send the request to the peer
             let msg = PeerRequest::SendMessage(Message::Request(

@@ -68,7 +68,7 @@ pub fn pick_blocks(state: &MainState) -> Vec<(file::BlockInfo, SocketAddr)> {
         let mut iter_ones = peer_info.has.iter_ones();
         'outer: while let Some(piece) = iter_ones.next() {
             // What blocks are outstanding for this piece?
-            let Some(ranges) = state.file.get_blocks(piece) else {
+            let Some(ranges) = state.file.get_unfilled(piece) else {
                 continue;
             };
 
