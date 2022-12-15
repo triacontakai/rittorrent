@@ -67,6 +67,7 @@ pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequ
                 // timer has expired if its expiration is before or the same as the current time
                 if timer.expiration <= Instant::now() {
                     assert!(timers.remove(&timer));
+                    id_map.remove(&timer.id).unwrap();
 
                     sender
                         .send(Response::Timer(TimerResponse { id: timer.id }))
