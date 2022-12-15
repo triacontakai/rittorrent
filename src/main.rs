@@ -12,16 +12,18 @@ mod utils;
 
 use args::PEER_ID;
 use file::DownloadFile;
+use log::{debug, info, trace, warn};
 use rand::Rng;
 use threads::Response;
 use timer::{spawn_timer_thread, TimerRequest};
 use tracker::{request, TrackerRequest};
 
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::ops::BitXor;
 use std::process;
 use std::time::Duration;
 use std::{collections::HashMap, net::TcpListener};
+
+use std::io::Write;
 
 use anyhow::{bail, Result};
 use bitvec::prelude::*;
@@ -30,12 +32,12 @@ use crossbeam::channel::{self, Sender};
 use crate::args::{ARGS, METAINFO};
 use crate::file::{Block, BlockInfo};
 use crate::peers::{spawn_peer_thread, Message, PeerRequest, PeerResponse};
+use crate::timer::TimerInfo;
 use crate::utils::RemoveValue;
 
 const DIGEST_SIZE: usize = 20;
 
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10); // TODO: is this a good value?
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20); // TODO: is this a good value?
 
 #[derive(Debug)]
 pub struct PeerInfo {
@@ -81,11 +83,11 @@ pub struct MainState {
 }
 
 fn broadcast_has(state: &mut MainState, piece: usize) {
-    println!("Sending Has for piece {:?}", piece);
+    trace!("Sending Has for piece {:?}", piece);
     state.peers.retain(|&addr, peer_info| {
         let msg = PeerRequest::SendMessage(Message::Have(piece as u32));
         if peer_info.sender.send(msg).is_err() {
-            println!(
+            warn!(
                 "Main: peer {:?} appears to have died. Removing from peer context map...",
                 addr
             );
@@ -95,7 +97,11 @@ fn broadcast_has(state: &mut MainState, piece: usize) {
     });
 }
 
-fn rescan_interest(my_has: &BitVec<u8, Msb0>, peer_info: &mut PeerInfo) -> Result<()> {
+fn rescan_interest(
+    my_has: &BitVec<u8, Msb0>,
+    peer_info: &mut PeerInfo,
+    addr: SocketAddr,
+) -> Result<()> {
     let interested = peer_info.has.iter().zip(my_has).any(|(p, s)| *p && !*s);
     if interested != peer_info.interested {
         peer_info.interested = interested;
@@ -106,6 +112,11 @@ fn rescan_interest(my_has: &BitVec<u8, Msb0>, peer_info: &mut PeerInfo) -> Resul
         } else {
             Message::NotInterested
         });
+        trace!(
+            "Interest state for peer {:?} changed to {:?}",
+            addr,
+            interested
+        );
         peer_info.sender.send(msg)?;
     }
 
@@ -114,7 +125,7 @@ fn rescan_interest(my_has: &BitVec<u8, Msb0>, peer_info: &mut PeerInfo) -> Resul
 
 fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()> {
     let PeerResponse::MessageReceived(addr, msg) = resp else {
-        println!("handle_peer_response(): received unhandled response type");
+        warn!("handle_peer_response(): received unhandled response type");
         return Ok(());
     };
 
@@ -127,15 +138,15 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
     match msg {
         Choke => {
             // when we receive choke we should remove all requests from "requested" queue for this peer
-            println!("Peer {:?} has choked us", addr);
+            info!("Peer {:?} has choked us", addr);
             peer_info.peer_choked = true;
         }
         Unchoke => {
-            println!("Peer {:?} has unchoked us", addr);
+            info!("Peer {:?} has unchoked us", addr);
             peer_info.peer_choked = false;
         }
         Interested => {
-            println!("Peer {:?} is interested in us", addr);
+            info!("Peer {:?} is interested in us", addr);
             peer_info.peer_interested = true;
         }
         NotInterested => {
@@ -146,7 +157,7 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             if let Some(mut idx) = peer_info.has.get_mut(piece) {
                 *idx = true;
             } else {
-                eprintln!("Peer {:?} sent Have with invalid piece", addr);
+                warn!("Peer {:?} sent Have with invalid piece", addr);
             }
 
             // Update my interested status
@@ -166,26 +177,35 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
                 peer_info.has = BitVec::from_slice(&bytes);
 
                 // Update my interested status
-                rescan_interest(state.file.bitvec(), peer_info)?;
+                rescan_interest(state.file.bitvec(), peer_info, addr)?;
             } else {
-                eprintln!("Peer {:?} sent Bitfield with invalid length", addr);
+                warn!("Peer {:?} sent Bitfield with invalid length", addr);
             }
         }
         Piece(piece, offset, data) => {
             let block = Block::new(piece as usize, offset as usize, &data);
 
             // remove request from the queue
-            if state.requested.remove_value((block.info(), addr)) {
+            if let Some(token) = state.requested.remove_value((block.info(), addr)) {
+                // ask the timer thread to terminate this timeout
+                state
+                    .timer_sender
+                    .send(TimerRequest::Cancel(token))
+                    .expect("Main thread failed to communicate with timer thread!");
+
                 // process the block
                 let result = state.file.process_block(block);
                 if let Ok(_) = result {
                     // keep statistics
                     peer_info.uploaded += data.len();
+
+                    // Update my interested status
+                    rescan_interest(state.file.bitvec(), peer_info, addr)?;
                 } else if let Err(e) = result {
-                    eprintln!("Failed to process piece from peer {:?}: {:?}", addr, e);
+                    warn!("Failed to process piece from peer {:?}: {:?}", addr, e);
                 }
             } else {
-                eprintln!("Peer {:?} send Piece we did not request", addr);
+                warn!("Peer {:?} send Piece we did not request", addr);
             }
 
             // did we just finish processing the piece?
@@ -195,17 +215,17 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             }
         }
         Request(piece, offset, length) => {
-            println!("I GOT A REQUEST");
+            info!("I GOT A REQUEST");
 
             let block_info = BlockInfo {
                 piece: piece as usize,
                 range: (offset as usize)..(offset as usize + length as usize),
             };
-            println!(" --> request info: {:?}", block_info);
+            info!(" --> request info: {:?}", block_info);
 
             // ignore request if we're choking this peer
             if peer_info.choked {
-                eprintln!("Warning: Peer {:?} made request while choked", addr);
+                warn!("Warning: Peer {:?} made request while choked", addr);
             } else {
                 let stuff = state.file.get_block(block_info);
                 let Ok(data) = stuff else {
@@ -235,6 +255,9 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
 }
 
 fn main() -> Result<()> {
+    // set the logger
+    env_logger::init();
+
     // we do a little arg parsing
     lazy_static::initialize(&ARGS);
 
@@ -242,6 +265,7 @@ fn main() -> Result<()> {
     let (tx, rx) = channel::unbounded();
 
     let tracker_sender = tracker::spawn_tracker_thread(tx.clone());
+    let connect_sender = connections::spawn_connect_thread(tx.clone());
 
     // send initial starting request
     let tracker_req = TrackerRequest {
@@ -262,14 +286,14 @@ fn main() -> Result<()> {
 
     // get list of peers from tracker
     // since tracker is currently the only thread, we can just recv here
-    let tracker_resp = match rx
-        .recv()
-        .expect("Failed to receive tracker response from tracker thread")
-    {
-        Response::Tracker(Ok(r)) => r,
-        Response::Tracker(Err(e)) => bail!("Error receiving response from tracker: {:?}", e),
-        _ => unreachable!(),
-    };
+    //let tracker_resp = match rx
+    //    .recv()
+    //    .expect("Failed to receive tracker response from tracker thread")
+    //{
+    //    Response::Tracker(Ok(r)) => r,
+    //    Response::Tracker(Err(e)) => bail!("Error receiving response from tracker: {:?}", e),
+    //    _ => unreachable!(),
+    //};
 
     //println!("Tracker response: {:#?}", tracker_resp);
 
@@ -311,26 +335,10 @@ fn main() -> Result<()> {
             .unwrap()
             .next()
             .unwrap();
-        eprintln!("Connecting to peer {:?}", addr);
-        let Ok(stream) = TcpStream::connect_timeout(&addr, CONNECTION_TIMEOUT) else {
-            println!(" --> Peer timed out");
-            continue;
-        };
-        eprintln!(" --> Connected");
-        state.peers.insert(addr, PeerInfo::new(stream, tx.clone()));
 
-        // send the peer our bitfield
-        let peer_info = state.peers.get(&addr).unwrap();
-        let bytes = state.file.bitfield().to_vec();
-        let msg = PeerRequest::SendMessage(Message::Bitfield(bytes));
-        peer_info
-            .sender
-            .send(msg)
-            .expect("Main failed to communicate with newly-created peer thread");
-
-        // TODO: delete this
-        let msg = PeerRequest::SendMessage(Message::Unchoke);
-        peer_info.sender.send(msg).expect("fuck you");
+        connect_sender
+            .send(addr)
+            .expect("Main thread failed to communicate with connection thread");
     }
 
     // Start listening
@@ -341,7 +349,7 @@ fn main() -> Result<()> {
     for resp in rx.iter() {
         match resp {
             Response::Connection(data) => {
-                println!("{:?}", data.peer);
+                debug!("{:?}", data.peer);
 
                 let addr = data.peer.peer_addr()?;
                 let peer_info = PeerInfo::new(data.peer, tx.clone());
@@ -359,11 +367,15 @@ fn main() -> Result<()> {
             Response::Peer(data) => {
                 handle_peer_response(&mut state, data)?;
             }
-            Response::Tracker(data) => {
-                println!("main thread received response {:#?}", data);
+            Response::Tracker(Ok(data)) => {
+                debug!("main thread received response {:#?}", data);
+            }
+            Response::Tracker(Err(e)) => {
+                panic!("tracker failed"); // TODO: handle this more gracefully
             }
             Response::Timer(data) => {
-                println!("Timed out. Token={}", data.id);
+                let (_, addr) = state.requested.get(&data.id).unwrap();
+                debug!("Timeout occurred for peer {:?}", addr);
 
                 // remove from requested queue
                 state.requested.remove(&data.id);
@@ -372,7 +384,13 @@ fn main() -> Result<()> {
 
         // Am I done?
         if state.file.is_complete() && !ARGS.seed {
-            println!("File download complete!");
+            info!("File download complete!");
+
+            // dump stats to file
+            let f = std::fs::File::create("./statistics.txt")?;
+            let mut writer = std::io::BufWriter::new(&f);
+            write!(&mut writer, "{:#?}", state.peers)?;
+
             process::exit(0); // TODO: tell the tracker we're done
         }
 
@@ -393,7 +411,7 @@ fn main() -> Result<()> {
             ));
             //println!("Peer {:?}: sent Request: {:?}", addr, msg);
             if peer_info.sender.send(msg).is_err() {
-                println!(
+                warn!(
                     "Main: peer {:?} appears to have died. Removing from peer context map...",
                     addr
                 );
@@ -402,11 +420,11 @@ fn main() -> Result<()> {
 
             // Associate a timer with the request
             let id: u64 = rand::thread_rng().gen();
-            let timer_req = TimerRequest {
+            let timer_req = TimerRequest::Timer(TimerInfo {
                 timer_len: REQUEST_TIMEOUT,
                 id,
                 repeat: false,
-            };
+            });
             // TODO: i think timer is broken and sometimes sends repeat even when we didnt ask.
             state
                 .timer_sender
@@ -418,7 +436,7 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("Exited from main loop");
+    debug!("Exited from main loop");
 
     Ok(())
 }

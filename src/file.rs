@@ -348,7 +348,8 @@ mod tests {
         ];
         let temp_file = tempfile::tempfile().unwrap();
 
-        let mut file = DownloadFile::new_from_file(temp_file, hashes, BLOCK_SIZE * 2, BLOCK_SIZE * 4).unwrap();
+        let mut file =
+            DownloadFile::new_from_file(temp_file, hashes, BLOCK_SIZE * 2, BLOCK_SIZE * 4).unwrap();
 
         let (data1_0, data1_1) = data1.split_at(BLOCK_SIZE);
         let (data2_0, data2_1) = data2.split_at(BLOCK_SIZE);
