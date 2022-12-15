@@ -71,23 +71,22 @@ pub mod response {
             }
             Value::List(list) => {
                 for val in list {
-                    let Value::Dict(map) = val else {
+                    let Value::Dict(mut map) = val else {
                         return Err(serde::de::Error::custom("peers list entry was not a Dict"))
                     };
 
-                    let Some(Value::Bytes(ip)) = map.get(&Cow::Borrowed(&b"ip"[..])) else {
+                    let Some(Value::Bytes(ip)) = map.remove(&Cow::Borrowed(&b"ip"[..])) else {
                         //return Err(serde::de::Error::custom("peers list entry does not contain key 'ip'"))
                         error!("peers list entry does not contain key 'ip'");
                         continue;
                     };
 
-                    let Some(&Value::Integer(port)) = map.get(&Cow::Borrowed(&b"port"[..])) else {
+                    let Some(Value::Integer(port)) = map.remove(&Cow::Borrowed(&b"port"[..])) else {
                         //return Err(serde::de::Error::custom("peers list entry does not contain key 'port'"))
                         error!("peers list entry does not contain key 'port'");
                         continue;
                     };
 
-                    let ip = ip.clone();
                     let ip =
                         String::from_utf8(ip.into_owned()).map_err(serde::de::Error::custom)?;
 
