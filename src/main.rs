@@ -243,7 +243,8 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
                     warn!("Failed to process piece from peer {:?}: {:?}", addr, e);
                 }
             } else {
-                warn!("Peer {:?} send Piece we did not request", addr);
+                let len = data.len();
+                warn!("Peer {:?} send Piece we did not request\n ---> piece={piece}, offset={offset}, len={len}", addr);
             }
 
             // did we just finish processing the piece?
@@ -438,11 +439,14 @@ fn main() -> Result<()> {
                     .expect("Failed to send request to tracker thread");
             }
             Response::Timer(data) => {
-                if let Some((_, addr)) = state.requested.get(&data.id) {
+                if let Some(&(_, addr)) = state.requested.get(&data.id) {
                     debug!("Timeout occurred for peer {:?}", addr);
 
                     // remove from requested queue
                     state.requested.remove(&data.id);
+
+                    // actually remove the peer
+                    state.peers.remove(&addr);
                 } else {
                     warn!("Weird race condition thing?");
                 }
