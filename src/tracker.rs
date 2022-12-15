@@ -19,6 +19,11 @@ pub mod request {
 }
 
 pub mod response {
+    use std::borrow::Cow;
+    use std::net::Ipv4Addr;
+
+    use bendy::value::Value;
+    use serde::Deserializer;
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, PartialEq)]
@@ -40,6 +45,57 @@ pub mod response {
 
         #[serde(rename = "failure reason", default)]
         pub(super) failure_reason: String,
+    }
+
+    fn deserialize_peers<'de, D>(deserializer: D) -> Result<Vec<Peer>, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        let mut peers = Vec::new();
+
+        match Value::deserialize(deserializer)? {
+            Value::Bytes(bytes) => {
+                const IP_SIZE: usize = 4;
+                const PORT_SIZE: usize = 2;
+                const ENTRY_SIZE: usize = IP_SIZE + PORT_SIZE;
+
+                for chunk in bytes.chunks_exact(6) {
+                    let ip = Ipv4Addr::from(u32::from_be_bytes(chunk[0..4].try_into().unwrap())).to_string();
+                    let port = u16::from_be_bytes(chunk[4..6].try_into().unwrap());
+
+                    peers.push(Peer {
+                        ip,
+                        port,
+                    });
+                }
+            }
+            Value::List(list) => {
+                for val in list {
+                    let Value::Dict(map) = val else {
+                        return Err(serde::de::Error::custom("peers list entry was not a Dict"))
+                    };
+
+                    let Some(Value::Bytes(ip)) = map.get(&Cow::Borrowed(&b"ip"[..])) else {
+                        return Err(serde::de::Error::custom("peers list entry does not contain key 'ip'"))
+                    };
+
+                    let Some(&Value::Integer(port)) = map.get(&Cow::Borrowed(&b"port"[..])) else {
+                        return Err(serde::de::Error::custom("peers list entry does not contain key 'port'"))
+                    };
+
+                    let ip = ip.clone();
+                    let ip = String::from_utf8(ip.into_owned()).map_err(serde::de::Error::custom)?;
+
+                    peers.push(Peer {
+                        ip,
+                        port: port.try_into().map_err(serde::de::Error::custom)?,
+                    });
+                }
+            }
+            _ => return Err(serde::de::Error::custom("peers entry was not Bytes or List")),
+        }
+
+        Ok(peers)
     }
 
     impl std::fmt::Debug for Peer {
