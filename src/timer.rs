@@ -1,5 +1,5 @@
 use std::{
-    collections::BinaryHeap,
+    collections::{BinaryHeap, HashMap, BTreeSet},
     thread,
     time::{Duration, Instant},
 };
@@ -21,7 +21,7 @@ pub struct TimerRequest {
     pub repeat: bool,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Timer {
     expiration: Instant,
     timer_len: Duration,
@@ -33,11 +33,14 @@ pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequ
     let (tx, rx) = channel::unbounded::<TimerRequest>();
 
     thread::spawn(move || {
-        let mut timers = BinaryHeap::new();
+        //let mut timers = BinaryHeap::new();
+        let mut id_map = HashMap::new();
+        let mut timers = BTreeSet::new();
 
         loop {
             let timeout = timers
-                .peek()
+                .iter()
+                .next()
                 .map(|x: &Timer| x.expiration.duration_since(Instant::now()))
                 .unwrap_or(Duration::MAX);
 
@@ -53,16 +56,17 @@ pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequ
                     repeat: req.repeat,
                 };
 
-                timers.push(timer);
+                id_map.insert(timer.id, timer);
+                timers.insert(timer);
             }
 
             // check for timer expirations
             while !timers.is_empty() {
-                let next_timer = timers.peek().unwrap();
+                let timer = *timers.iter().next().unwrap();
 
                 // timer has expired if its expiration is before or the same as the current time
-                if next_timer.expiration <= Instant::now() {
-                    let timer = timers.pop().unwrap();
+                if timer.expiration <= Instant::now() {
+                    assert!(timers.remove(&timer));
 
                     sender
                         .send(Response::Timer(TimerResponse { id: timer.id }))
@@ -73,12 +77,15 @@ pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequ
                         let expiration = Instant::now()
                             .checked_add(timer.timer_len)
                             .expect("Invalid timer!");
-                        timers.push(Timer {
+                        let new_timer = Timer {
                             expiration,
                             timer_len: timer.timer_len,
                             id: timer.id,
                             repeat: timer.repeat,
-                        });
+                        };
+
+                        id_map.insert(new_timer.id, new_timer);
+                        timers.insert(new_timer);
                     }
                 } else {
                     // break if we have reached a timer that has not expired
