@@ -60,10 +60,11 @@ pub mod response {
                 const PORT_SIZE: usize = 2;
                 const ENTRY_SIZE: usize = IP_SIZE + PORT_SIZE;
 
-                for chunk in bytes.chunks_exact(6) {
-                    let ip = Ipv4Addr::from(u32::from_be_bytes(chunk[0..4].try_into().unwrap()))
-                        .to_string();
-                    let port = u16::from_be_bytes(chunk[4..6].try_into().unwrap());
+                for chunk in bytes.chunks_exact(ENTRY_SIZE) {
+                    let ip =
+                        Ipv4Addr::from(u32::from_be_bytes(chunk[0..IP_SIZE].try_into().unwrap()))
+                            .to_string();
+                    let port = u16::from_be_bytes(chunk[IP_SIZE..ENTRY_SIZE].try_into().unwrap());
 
                     peers.push(Peer { ip, port });
                 }
