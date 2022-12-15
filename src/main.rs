@@ -20,10 +20,8 @@ use tracker::{request, TrackerRequest};
 
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::process;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{collections::HashMap, net::TcpListener};
-
-use std::io::Write;
 
 use anyhow::{bail, Result};
 use bitvec::prelude::*;
@@ -251,8 +249,6 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
             }
         }
         Request(piece, offset, length) => {
-            info!("I GOT A REQUEST");
-
             let block_info = BlockInfo {
                 piece: piece as usize,
                 range: (offset as usize)..(offset as usize + length as usize),

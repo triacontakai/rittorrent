@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::collections::HashMap;
 
 use bendy::{serde::to_bytes, value::Value};

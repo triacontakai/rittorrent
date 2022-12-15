@@ -127,7 +127,6 @@ use format_bytes::format_bytes;
 use request::Request;
 use response::Response;
 
-use crate::args::{ARGS, METAINFO, PEER_ID};
 use crate::http::http_get;
 use crate::threads;
 

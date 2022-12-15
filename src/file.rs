@@ -1,8 +1,7 @@
 use std::{
-    collections::HashSet,
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
-    ops::{IndexMut, Range},
+    ops::Range,
     path::Path,
 };
 

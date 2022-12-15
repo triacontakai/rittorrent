@@ -3,7 +3,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
-use crossbeam::channel::{self, Sender};
+use crossbeam::channel::Sender;
 use log::{info, warn};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(500);

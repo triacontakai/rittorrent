@@ -10,7 +10,6 @@ use std::{
 
 use crate::args::{METAINFO, PEER_ID};
 use crate::threads::Response;
-use crate::tracker::response::Peer;
 
 const PROTO_IDENTIFIER: &str = "BitTorrent protocol";
 
@@ -52,7 +51,6 @@ pub enum PeerRequest {
 pub enum PeerResponse {
     MessageReceived(SocketAddr, Message),
     Heartbeat,
-    Death,
 }
 
 impl Message {
@@ -184,11 +182,6 @@ impl Message {
             Err(anyhow!("Received unsupported message type"))
         }
     }
-}
-
-// lol
-pub fn connect_to_peer(peer: Peer) -> Result<TcpStream> {
-    Ok(TcpStream::connect((peer.ip, peer.port))?)
 }
 
 fn do_handshake(
