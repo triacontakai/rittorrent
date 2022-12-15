@@ -1,4 +1,4 @@
-all: decomposition_report.pdf code_progress.pdf
+all: decomposition_report.pdf code_progress.pdf final_report.pdf
 
 decomposition_report.pdf: decomposition-report/main.pdf
 	cp decomposition-report/main.pdf decomposition_report.pdf
@@ -11,6 +11,12 @@ code_progress.pdf: code-progress/main.pdf
 
 code-progress/main.pdf: code-progress/main.tex
 	pdflatex -output-directory=code-progress code-progress/main.tex
+
+final_report.pdf: final-report/main.pdf
+	cp final-report/main.pdf final_report.pdf
+
+final-report/main.pdf: final-report/main.tex
+	pdflatex -output-directory=final-report final-report/main.tex
 
 .PHONY: all clean
 
