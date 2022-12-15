@@ -15,7 +15,12 @@ pub struct TimerResponse {
     pub id: Token,
 }
 
-pub struct TimerRequest {
+pub enum TimerRequest {
+    Timer(TimerInfo),
+    Cancel(Token),
+}
+
+pub struct TimerInfo {
     pub timer_len: Duration,
     pub id: Token,
     pub repeat: bool,
@@ -46,18 +51,29 @@ pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequ
 
             // see if we have a new timer to process
             if let Ok(req) = rx.recv_timeout(timeout) {
-                let expiration = Instant::now()
-                    .checked_add(req.timer_len)
-                    .expect("Invalid timer!");
-                let timer = Timer {
-                    expiration,
-                    timer_len: req.timer_len,
-                    id: req.id,
-                    repeat: req.repeat,
-                };
+                match req {
+                    TimerRequest::Timer(req) => {
+                        let expiration = Instant::now()
+                            .checked_add(req.timer_len)
+                            .expect("Invalid timer!");
 
-                id_map.insert(timer.id, timer);
-                timers.insert(timer);
+                        let timer = Timer {
+                            expiration,
+                            timer_len: req.timer_len,
+                            id: req.id,
+                            repeat: req.repeat,
+                        };
+
+                        id_map.insert(timer.id, timer);
+                        timers.insert(timer);
+                    }
+                    TimerRequest::Cancel(id) => {
+                        if let Some(&timer) = id_map.get(&id) {
+                            assert!(timers.remove(&timer));
+                            id_map.remove(&id).unwrap();
+                        }
+                    }
+                }
             }
 
             // check for timer expirations
@@ -103,7 +119,7 @@ pub fn spawn_timer_thread(sender: Sender<threads::Response>) -> Sender<TimerRequ
 mod tests {
     use std::time::{Duration, Instant};
 
-    use crate::threads;
+    use crate::{threads, timer::TimerInfo};
 
     use crossbeam::channel;
 
@@ -118,11 +134,11 @@ mod tests {
         // this is terrible for testing but oh well it probably works fine
         let duration = Duration::from_millis(100);
 
-        let new_timer = TimerRequest {
+        let new_timer = TimerRequest::Timer(TimerInfo {
             timer_len: duration,
             id: 727,
             repeat: false,
-        };
+        });
 
         let before = Instant::now();
 
