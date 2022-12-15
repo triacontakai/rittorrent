@@ -123,6 +123,7 @@ use std::thread;
 use anyhow::{anyhow, Result};
 use bendy::serde::from_bytes;
 use crossbeam::channel::{self, Sender};
+use format_bytes::format_bytes;
 
 use request::Request;
 use response::Response;
@@ -130,6 +131,8 @@ use response::Response;
 use crate::args::{ARGS, METAINFO, PEER_ID};
 use crate::http::http_get;
 use crate::threads;
+
+const NUM_WANT: usize = 500;
 
 impl Request {
     pub fn send(&self, url: &str) -> Result<Response> {
@@ -139,7 +142,7 @@ impl Request {
         let uploaded = self.uploaded.to_string();
         let downloaded = self.downloaded.to_string();
         let left = self.left.to_string();
-        let query: [(&str, &[u8]); 7] = [
+        let query: [(&str, &[u8]); 9] = [
             ("info_hash", &self.info_hash),
             ("peer_id", &self.peer_id),
             ("port", port.as_bytes()),
@@ -155,6 +158,8 @@ impl Request {
                     None => "empty".as_bytes(),
                 },
             ),
+            ("compact", b"1"),
+            ("numwant", &format_bytes!(b"{}", NUM_WANT)),
         ];
 
         let http_response = http_get(url, &query)?;
