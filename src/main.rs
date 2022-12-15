@@ -82,6 +82,16 @@ pub struct MainState {
     pub requested: HashMap<timer::Token, (file::BlockInfo, SocketAddr)>,
 }
 
+impl MainState {
+    pub fn uploaded(&self) -> usize {
+        self.peers.values().fold(0, |acc, p| acc + p.uploaded)
+    }
+
+    pub fn downloaded(&self) -> usize {
+        self.peers.values().fold(0, |acc, p| acc + p.downloaded)
+    }
+}
+
 fn broadcast_has(state: &mut MainState, piece: usize) {
     trace!("Sending Has for piece {:?}", piece);
     state.peers.retain(|&addr, peer_info| {
@@ -273,7 +283,7 @@ fn main() -> Result<()> {
         request: request::Request {
             info_hash: METAINFO.info_hash(),
             peer_id: *PEER_ID,
-            my_port: ARGS.port.unwrap_or(5000),
+            my_port: ARGS.port,
             uploaded: 0,
             downloaded: 0,
             left: 5000, // TODO
@@ -323,27 +333,11 @@ fn main() -> Result<()> {
         requested: HashMap::new(),
     };
 
-    // Connect to some initial peers
-    let mut peer_iter = tracker_resp.peers.iter();
-    while let Some(p) = peer_iter.next() {
-        if state.peers.len() >= ARGS.max_connections {
-            break;
-        }
-
-        let addr = (&p.ip[..], p.port)
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap();
-
-        connect_sender
-            .send(addr)
-            .expect("Main thread failed to communicate with connection thread");
-    }
-
     // Start listening
-    let server = TcpListener::bind("0.0.0.0:5000")?;
+    let server = TcpListener::bind(("0.0.0.0", ARGS.port))?;
     connections::spawn_accept_thread(server, tx.clone());
+
+    let tracker_timer_id: u64 = rand::thread_rng().gen();
 
     // Main loop
     for resp in rx.iter() {
@@ -369,9 +363,60 @@ fn main() -> Result<()> {
             }
             Response::Tracker(Ok(data)) => {
                 debug!("main thread received response {:#?}", data);
+
+                // Create a timer for the next request
+                let timer_req = TimerRequest::Timer(TimerInfo {
+                    timer_len: Duration::from_secs(data.interval as u64),
+                    id: tracker_timer_id,
+                    repeat: false,
+                });
+                state
+                    .timer_sender
+                    .send(timer_req)
+                    .expect("Main thread failed to communicate with timer thread!");
+
+                let mut peer_iter = data.peers.iter();
+                while let Some(p) = peer_iter.next() {
+                    if state.peers.len() >= ARGS.max_connections {
+                        break;
+                    }
+
+                    let addr = (&p.ip[..], p.port)
+                        .to_socket_addrs()
+                        .unwrap()
+                        .next()
+                        .unwrap();
+
+                    // don't connect to the same peer twice
+                    if state.peers.contains_key(&addr) {
+                        continue;
+                    }
+
+                    connect_sender
+                        .send(addr)
+                        .expect("Main thread failed to communicate with connection thread");
+                }
             }
             Response::Tracker(Err(e)) => {
                 panic!("tracker failed"); // TODO: handle this more gracefully
+            }
+            Response::Timer(data) if { data.id == tracker_timer_id } => {
+                // send periodic tracker request
+                let tracker_req = TrackerRequest {
+                    url: METAINFO.announce.clone(),
+                    request: request::Request {
+                        info_hash: METAINFO.info_hash(),
+                        peer_id: *PEER_ID,
+                        my_port: ARGS.port,
+                        uploaded: state.uploaded(),
+                        downloaded: state.downloaded(),
+                        left: 5000, // TODO
+                        event: None,
+                    },
+                };
+                tracker_sender
+                    .send(tracker_req)
+                    .expect("Failed to send request to tracker thread");
             }
             Response::Timer(data) => {
                 let (_, addr) = state.requested.get(&data.id).unwrap();

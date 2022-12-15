@@ -1,5 +1,5 @@
 use std::{
-    collections::{BinaryHeap, HashMap, BTreeSet},
+    collections::{BTreeSet, BinaryHeap, HashMap},
     thread,
     time::{Duration, Instant},
 };

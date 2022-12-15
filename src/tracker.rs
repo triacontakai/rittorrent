@@ -33,7 +33,7 @@ pub mod response {
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
     pub struct Response {
         #[serde(default)]
-        pub interval: u32,
+        pub interval: u64,
 
         #[serde(default)]
         pub peers: Vec<Peer>,

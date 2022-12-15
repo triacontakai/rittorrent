@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 use bendy::{serde::from_bytes, value::Value};
 use clap::{Parser, ValueEnum};
 use lazy_static::lazy_static;
-use rand::RngCore;
+use rand::{Rng, RngCore};
 
 use crate::torrent::{Info, MetaInfo};
 
@@ -26,8 +26,8 @@ pub struct Args {
     pub max_connections: usize,
 
     /// Port to listen on. Random if not provided
-    #[arg(short, long)]
-    pub port: Option<u16>,
+    #[arg(short, long, default_value_t = rand::thread_rng().gen())]
+    pub port: u16,
 
     /// Force a specific tracker protocol to be used
     #[arg(short = 'r', long)]

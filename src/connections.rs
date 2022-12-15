@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam::channel::{self, Sender};
-use log::warn;
+use log::{warn, info};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -29,10 +29,12 @@ pub fn spawn_connect_thread(sender: Sender<Response>) -> Sender<SocketAddr> {
     let (tx, rx) = channel::unbounded::<SocketAddr>();
     thread::spawn(move || {
         for req in rx {
+            info!("Connecting to peer at {:?}", req);
             let Ok(stream) = TcpStream::connect_timeout(&req, CONNECTION_TIMEOUT) else {
                 warn!(" --> Connection to peer at {:?} timed out", req);
                 continue;
             };
+            info!(" --> Connection successful");
 
             sender
                 .send(Response::Connection(ConnectionData { peer: stream }))
