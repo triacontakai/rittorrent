@@ -37,7 +37,7 @@ use crate::utils::RemoveValue;
 
 const DIGEST_SIZE: usize = 20;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5); // TODO: is this a good value?
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(12); // TODO: is this a good value?
 
 #[derive(Debug)]
 pub struct PeerInfo {
@@ -410,7 +410,7 @@ fn main() -> Result<()> {
                 }
             }
             Response::Tracker(Err(e)) => {
-                panic!("tracker failed"); // TODO: handle this more gracefully
+                panic!("tracker failed with error: {:?}", e); // TODO: handle this more gracefully
             }
             Response::Timer(data) if { data.id == tracker_timer_id } => {
                 // send periodic tracker request
