@@ -146,10 +146,9 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
         return Ok(());
     };
 
-    let peer_info = state
-        .peers
-        .get_mut(&addr)
-        .expect(&format!("Main thread has no context for peer {:?}", addr));
+    let Some(peer_info) = state.peers.get_mut(&addr) else {
+        bail!("Main thread has no context for peer {:?}", addr);
+    };
 
     use peers::Message::*;
     match msg {
@@ -282,7 +281,6 @@ fn main() -> Result<()> {
     let (tx, rx) = channel::unbounded();
 
     let tracker_sender = tracker::spawn_tracker_thread(tx.clone());
-    let connect_sender = connections::spawn_connect_thread(tx.clone());
 
     // get list of peers from tracker
     // since tracker is currently the only thread, we can just recv here
@@ -353,6 +351,12 @@ fn main() -> Result<()> {
                 debug!("{:?}", data.peer);
 
                 let addr = data.peer.peer_addr()?;
+
+                // Don't accept connection from peer we're connected to!
+                if state.peers.contains_key(&addr) {
+                    continue;
+                }
+
                 let peer_info = PeerInfo::new(data.peer, tx.clone());
                 let peer_info = state.peers.entry(addr).or_insert(peer_info);
 
@@ -366,7 +370,9 @@ fn main() -> Result<()> {
                     .send(PeerRequest::SendMessage(peers::Message::Unchoke))?; // TODO; question mark?
             }
             Response::Peer(data) => {
-                handle_peer_response(&mut state, data)?;
+                if handle_peer_response(&mut state, data).is_err() {
+                    error!("Failed to handle peer response");
+                }
             }
             Response::Tracker(Ok(data)) => {
                 debug!("main thread received response {:#?}", data);
@@ -400,9 +406,7 @@ fn main() -> Result<()> {
                         continue;
                     }
 
-                    connect_sender
-                        .send(addr)
-                        .expect("Main thread failed to communicate with connection thread");
+                    connections::async_connect(tx.clone(), addr);
                 }
             }
             Response::Tracker(Err(e)) => {
@@ -427,11 +431,14 @@ fn main() -> Result<()> {
                     .expect("Failed to send request to tracker thread");
             }
             Response::Timer(data) => {
-                let (_, addr) = state.requested.get(&data.id).unwrap();
-                debug!("Timeout occurred for peer {:?}", addr);
+                if let Some((_, addr)) = state.requested.get(&data.id) {
+                    debug!("Timeout occurred for peer {:?}", addr);
 
-                // remove from requested queue
-                state.requested.remove(&data.id);
+                    // remove from requested queue
+                    state.requested.remove(&data.id);
+                } else {
+                    warn!("Weird race condition thing?");
+                }
             }
         }
 
