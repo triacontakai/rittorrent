@@ -44,3 +44,18 @@ pub fn spawn_connect_thread(sender: Sender<Response>) -> Sender<SocketAddr> {
 
     tx
 }
+
+pub fn async_connect(sender: Sender<Response>, addr: SocketAddr) {
+    thread::spawn(move || {
+        info!("Connecting to peer at {:?}", addr);
+        let Ok(stream) = TcpStream::connect_timeout(&addr, CONNECTION_TIMEOUT) else {
+            warn!(" --> Connection to peer at {:?} timed out", addr);
+            return;
+        };
+        info!(" --> Connection successful");
+
+        sender
+            .send(Response::Connection(ConnectionData { peer: stream }))
+            .expect("Receiver hung up!");
+    });
+}
