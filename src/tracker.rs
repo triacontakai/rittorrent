@@ -40,7 +40,7 @@ pub mod response {
         #[serde(default)]
         pub interval: u64,
 
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_peers")]
         pub peers: Vec<Peer>,
 
         #[serde(rename = "failure reason", default)]
@@ -49,7 +49,7 @@ pub mod response {
 
     fn deserialize_peers<'de, D>(deserializer: D) -> Result<Vec<Peer>, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         let mut peers = Vec::new();
 
@@ -60,13 +60,11 @@ pub mod response {
                 const ENTRY_SIZE: usize = IP_SIZE + PORT_SIZE;
 
                 for chunk in bytes.chunks_exact(6) {
-                    let ip = Ipv4Addr::from(u32::from_be_bytes(chunk[0..4].try_into().unwrap())).to_string();
+                    let ip = Ipv4Addr::from(u32::from_be_bytes(chunk[0..4].try_into().unwrap()))
+                        .to_string();
                     let port = u16::from_be_bytes(chunk[4..6].try_into().unwrap());
 
-                    peers.push(Peer {
-                        ip,
-                        port,
-                    });
+                    peers.push(Peer { ip, port });
                 }
             }
             Value::List(list) => {
@@ -84,7 +82,8 @@ pub mod response {
                     };
 
                     let ip = ip.clone();
-                    let ip = String::from_utf8(ip.into_owned()).map_err(serde::de::Error::custom)?;
+                    let ip =
+                        String::from_utf8(ip.into_owned()).map_err(serde::de::Error::custom)?;
 
                     peers.push(Peer {
                         ip,
@@ -92,7 +91,11 @@ pub mod response {
                     });
                 }
             }
-            _ => return Err(serde::de::Error::custom("peers entry was not Bytes or List")),
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "peers entry was not Bytes or List",
+                ))
+            }
         }
 
         Ok(peers)
