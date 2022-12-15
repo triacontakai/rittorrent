@@ -12,7 +12,7 @@ mod utils;
 
 use args::PEER_ID;
 use file::DownloadFile;
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use rand::Rng;
 use threads::Response;
 use timer::{spawn_timer_thread, TimerRequest};
@@ -37,7 +37,7 @@ use crate::utils::RemoveValue;
 
 const DIGEST_SIZE: usize = 20;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(20); // TODO: is this a good value?
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5); // TODO: is this a good value?
 
 #[derive(Debug)]
 pub struct PeerInfo {
@@ -95,6 +95,13 @@ impl MainState {
 fn broadcast_has(state: &mut MainState, piece: usize) {
     trace!("Sending Has for piece {:?}", piece);
     state.peers.retain(|&addr, peer_info| {
+        // don't send to peer who already has this piece
+        if let Some(idx) = peer_info.has.get(piece) {
+            if *idx {
+                return true;
+            }
+        }
+
         let msg = PeerRequest::SendMessage(Message::Have(piece as u32));
         if peer_info.sender.send(msg).is_err() {
             warn!(
@@ -277,23 +284,6 @@ fn main() -> Result<()> {
     let tracker_sender = tracker::spawn_tracker_thread(tx.clone());
     let connect_sender = connections::spawn_connect_thread(tx.clone());
 
-    // send initial starting request
-    let tracker_req = TrackerRequest {
-        url: METAINFO.announce.clone(),
-        request: request::Request {
-            info_hash: METAINFO.info_hash(),
-            peer_id: *PEER_ID,
-            my_port: ARGS.port,
-            uploaded: 0,
-            downloaded: 0,
-            left: 5000, // TODO
-            event: Some(request::Event::Started),
-        },
-    };
-    tracker_sender
-        .send(tracker_req)
-        .expect("Failed to send request to tracker thread");
-
     // get list of peers from tracker
     // since tracker is currently the only thread, we can just recv here
     //let tracker_resp = match rx
@@ -333,6 +323,23 @@ fn main() -> Result<()> {
         requested: HashMap::new(),
     };
 
+    // send initial starting request
+    let tracker_req = TrackerRequest {
+        url: METAINFO.announce.clone(),
+        request: request::Request {
+            info_hash: METAINFO.info_hash(),
+            peer_id: *PEER_ID,
+            my_port: ARGS.port,
+            uploaded: 0,
+            downloaded: 0,
+            left: state.file.left(),
+            event: Some(request::Event::Started),
+        },
+    };
+    tracker_sender
+        .send(tracker_req)
+        .expect("Failed to send request to tracker thread");
+
     // Start listening
     let server = TcpListener::bind(("0.0.0.0", ARGS.port))?;
     connections::spawn_accept_thread(server, tx.clone());
@@ -366,7 +373,8 @@ fn main() -> Result<()> {
 
                 // Create a timer for the next request
                 let timer_req = TimerRequest::Timer(TimerInfo {
-                    timer_len: Duration::from_secs(data.interval as u64),
+                    //timer_len: Duration::from_secs(data.interval as u64),
+                    timer_len: Duration::from_secs(30),
                     id: tracker_timer_id,
                     repeat: false,
                 });
@@ -410,7 +418,7 @@ fn main() -> Result<()> {
                         my_port: ARGS.port,
                         uploaded: state.uploaded(),
                         downloaded: state.downloaded(),
-                        left: 5000, // TODO
+                        left: state.file.left(),
                         event: None,
                     },
                 };
@@ -454,6 +462,7 @@ fn main() -> Result<()> {
                 block.range.start as u32,
                 (block.range.end - block.range.start) as u32,
             ));
+            //trace!("Requested block {:?} from peer {:?}", block, addr);
             //println!("Peer {:?}: sent Request: {:?}", addr, msg);
             if peer_info.sender.send(msg).is_err() {
                 warn!(

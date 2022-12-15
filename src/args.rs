@@ -26,7 +26,7 @@ pub struct Args {
     pub max_connections: usize,
 
     /// Port to listen on. Random if not provided
-    #[arg(short, long, default_value_t = rand::thread_rng().gen())]
+    #[arg(short, long, default_value_t = rand::thread_rng().gen_range(1025..65535))]
     pub port: u16,
 
     /// Force a specific tracker protocol to be used

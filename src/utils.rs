@@ -10,12 +10,16 @@ impl<K: Eq + Hash + Clone, V: PartialEq> RemoveValue<K, V> for HashMap<K, V> {
     // surely andrei will replace this horror with 20 magical combined iterator methods
     fn remove_value(&mut self, value: V) -> Option<K> {
         let mut key: Option<K> = None;
+        let mut count = 0;
         self.retain(|k, v| {
             if *v == value {
-                key = Some(k.clone())
+                key = Some(k.clone());
+                count += 1;
             }
             *v != value
         });
+
+        assert!(count <= 1);
 
         key
     }

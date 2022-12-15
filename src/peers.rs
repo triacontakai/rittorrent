@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use crossbeam::channel::{self, Select, Sender};
+use log::{error, warn};
 use std::{
     io::{self, BufReader, BufWriter, Read, Write},
     net::{SocketAddr, TcpStream},
@@ -250,7 +251,7 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
                         Ok(t) => {
                             // timeout; just continue
                             if t.kind() != io::ErrorKind::WouldBlock {
-                                eprintln!("Received thread encountered I/O error: {}", t);
+                                warn!("Received thread encountered I/O error: {}", t);
                                 return;
                             }
                         }
@@ -276,9 +277,10 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
             let oper = sel.select();
             match oper.index() {
                 i if i == main_thread_oper => {
-                    let req = oper
-                        .recv(&rx)
-                        .expect("Peer thread failed to read from main thread channel");
+                    let Ok(req) = oper.recv(&rx) else {
+                        error!("Peer thread failed to read from receiver thread channel");
+                        return;
+                    };
 
                     use PeerRequest::*;
                     match req {
