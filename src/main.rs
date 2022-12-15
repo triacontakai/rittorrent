@@ -20,7 +20,7 @@ use tracker::{request, TrackerRequest};
 
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::process;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, net::TcpListener};
 
 use std::io::Write;
@@ -38,6 +38,7 @@ use crate::utils::RemoveValue;
 const DIGEST_SIZE: usize = 20;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12); // TODO: is this a good value?
+const RATE_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub struct PeerInfo {
@@ -56,6 +57,10 @@ pub struct PeerInfo {
     // statistics (and their distributions)
     pub uploaded: usize,
     pub downloaded: usize,
+
+    // "recent" statistics
+    pub uploaded_recently: usize,
+    pub downloaded_recently: usize,
 }
 
 impl PeerInfo {
@@ -71,6 +76,8 @@ impl PeerInfo {
             has: bitvec![u8, Msb0; 0; piece_count],
             uploaded: 0,
             downloaded: 0,
+            uploaded_recently: 0,
+            downloaded_recently: 0,
         }
     }
 }
@@ -153,8 +160,22 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
     use peers::Message::*;
     match msg {
         Choke => {
-            // when we receive choke we should remove all requests from "requested" queue for this peer
             info!("Peer {:?} has choked us", addr);
+
+            // remove all entries in requested with this peer
+            //state.requested.retain(|&id, (_, p)| {
+            //    if *p != addr {
+            //        // cancel the timeout
+            //        state
+            //            .timer_sender
+            //            .send(TimerRequest::Cancel(id))
+            //            .expect("Failed to communicate with timer thread!");
+
+            //        return false;
+            //    }
+            //    true
+            //});
+
             peer_info.peer_choked = true;
         }
         Unchoke => {
@@ -214,6 +235,7 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
                 if let Ok(_) = result {
                     // keep statistics
                     peer_info.uploaded += data.len();
+                    peer_info.uploaded_recently += data.len();
 
                     // Update my interested status
                     rescan_interest(state.file.bitvec(), peer_info, addr)?;
@@ -250,6 +272,7 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
 
                 // keep statistics
                 peer_info.downloaded += data.len();
+                peer_info.downloaded_recently += data.len();
 
                 // send a Piece response
                 let msg = PeerRequest::SendMessage(Message::Piece(piece, offset, data));
@@ -261,11 +284,6 @@ fn handle_peer_response(state: &mut MainState, resp: PeerResponse) -> Result<()>
         // ignore keepalives for now (we do our own timeouts)
         Keepalive => (),
     };
-
-    //println!(
-    //    "<--- Current bitfield for {:?} is {:?} --->",
-    //    addr, peer_info.has
-    //);
 
     Ok(())
 }
@@ -281,17 +299,6 @@ fn main() -> Result<()> {
     let (tx, rx) = channel::unbounded();
 
     let tracker_sender = tracker::spawn_tracker_thread(tx.clone());
-
-    // get list of peers from tracker
-    // since tracker is currently the only thread, we can just recv here
-    //let tracker_resp = match rx
-    //    .recv()
-    //    .expect("Failed to receive tracker response from tracker thread")
-    //{
-    //    Response::Tracker(Ok(r)) => r,
-    //    Response::Tracker(Err(e)) => bail!("Error receiving response from tracker: {:?}", e),
-    //    _ => unreachable!(),
-    //};
 
     //println!("Tracker response: {:#?}", tracker_resp);
 
@@ -380,7 +387,7 @@ fn main() -> Result<()> {
                 // Create a timer for the next request
                 let timer_req = TimerRequest::Timer(TimerInfo {
                     //timer_len: Duration::from_secs(data.interval as u64),
-                    timer_len: Duration::from_secs(30),
+                    timer_len: Duration::from_secs(20),
                     id: tracker_timer_id,
                     repeat: false,
                 });
