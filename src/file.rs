@@ -108,7 +108,11 @@ impl DownloadFile {
         piece_size: usize,
         total_size: usize,
     ) -> Result<Self> {
-        let mut download_file = Self::new(file_name, hashes, piece_size, total_size)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(file_name)?;
+        let mut download_file = Self::new_from_file(file, hashes, piece_size, total_size)?;
         download_file.downloaded = download_file.total_size;
 
         for mut bit in download_file.bitfield.iter_mut() {

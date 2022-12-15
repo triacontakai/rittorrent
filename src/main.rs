@@ -37,10 +37,7 @@ use crate::utils::RemoveValue;
 
 const DIGEST_SIZE: usize = 20;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(12); // TODO: is this a good value?
-const RATE_INTERVAL: Duration = Duration::from_secs(10);
-
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PeerInfo {
     // channel to send to this peer
     pub sender: Sender<PeerRequest>,
@@ -315,12 +312,21 @@ fn main() -> Result<()> {
         peers: HashMap::new(),
 
         // File I/O subsystem context
-        file: DownloadFile::new(
-            METAINFO.info.name.clone(),
-            &hashes,
-            METAINFO.info.piece_length,
-            METAINFO.info.length,
-        )?,
+        file: if ARGS.seed_existing {
+            DownloadFile::new_seeding(
+                METAINFO.info.name.clone(),
+                &hashes,
+                METAINFO.info.piece_length,
+                METAINFO.info.length,
+            )?
+        } else {
+            DownloadFile::new(
+                METAINFO.info.name.clone(),
+                &hashes,
+                METAINFO.info.piece_length,
+                METAINFO.info.length,
+            )?
+        },
 
         // timer thread to handle block timeouts and periodic game theory
         timer_sender: spawn_timer_thread(tx.clone()),
@@ -330,27 +336,35 @@ fn main() -> Result<()> {
     };
 
     // send initial starting request
-    let tracker_req = TrackerRequest {
-        url: METAINFO.announce.clone(),
-        request: request::Request {
-            info_hash: METAINFO.info_hash(),
-            peer_id: *PEER_ID,
-            my_port: ARGS.port,
-            uploaded: 0,
-            downloaded: 0,
-            left: state.file.left(),
-            event: Some(request::Event::Started),
-        },
-    };
-    tracker_sender
-        .send(tracker_req)
-        .expect("Failed to send request to tracker thread");
+    if !ARGS.skip_announce {
+        let tracker_req = TrackerRequest {
+            url: METAINFO.announce.clone(),
+            request: request::Request {
+                info_hash: METAINFO.info_hash(),
+                peer_id: *PEER_ID,
+                my_port: ARGS.port,
+                uploaded: 0,
+                downloaded: 0,
+                left: state.file.left(),
+                event: Some(request::Event::Started),
+            },
+        };
+        tracker_sender
+            .send(tracker_req)
+            .expect("Failed to send request to tracker thread");
+    }
 
     // Start listening
     let server = TcpListener::bind(("0.0.0.0", ARGS.port))?;
     connections::spawn_accept_thread(server, tx.clone());
 
     let tracker_timer_id: u64 = rand::thread_rng().gen();
+
+    // Add single peer (if provided)
+    if let Some(peer) = &ARGS.add_peer {
+        let addr = peer.to_socket_addrs().unwrap().next().unwrap();
+        connections::async_connect(tx.clone(), addr);
+    }
 
     // Main loop
     for resp in rx.iter() {
@@ -373,13 +387,18 @@ fn main() -> Result<()> {
                 let msg = PeerRequest::SendMessage(Message::Bitfield(bytes));
                 peer_info.sender.send(msg)?;
 
-                peer_info
+                // We don't have any choke/unchoke logic for now;
+                // let's just be totally benevolent.
+                if let Err(e) = peer_info
                     .sender
-                    .send(PeerRequest::SendMessage(peers::Message::Unchoke))?; // TODO; question mark?
+                    .send(PeerRequest::SendMessage(peers::Message::Unchoke))
+                {
+                    error!("Failed to send unchoke to peer at {:?}: {:?}", addr, e);
+                }
             }
             Response::Peer(data) => {
-                if handle_peer_response(&mut state, data).is_err() {
-                    error!("Failed to handle peer response");
+                if let Err(e) = handle_peer_response(&mut state, data) {
+                    error!("Failed to handle peer response: {:?}", e);
                 }
             }
             Response::Tracker(Ok(data)) => {
@@ -396,6 +415,28 @@ fn main() -> Result<()> {
                     .timer_sender
                     .send(timer_req)
                     .expect("Main thread failed to communicate with timer thread!");
+
+                // keep top n peers
+                let mut n = ARGS.max_connections / 2;
+                let mut s: Vec<SocketAddr> = state.peers.keys().map(|x| *x).collect();
+                s.sort_unstable_by(|&addr1, &addr2| {
+                    let peer_info1 = state.peers.get(&addr1).unwrap();
+                    let peer_info2 = state.peers.get(&addr2).unwrap();
+
+                    peer_info2.uploaded_recently.cmp(&peer_info1.uploaded)
+                });
+                if n > s.len() {
+                    n = s.len();
+                }
+                for addr in s.drain(n..) {
+                    state.peers.remove(&addr);
+                }
+
+                // reset uploaded/downloaded recently
+                for (_, peer_info) in state.peers.iter_mut() {
+                    peer_info.uploaded_recently = 0;
+                    peer_info.downloaded_recently = 0;
+                }
 
                 let mut peer_iter = data.peers.iter();
                 while let Some(p) = peer_iter.next() {
@@ -418,7 +459,7 @@ fn main() -> Result<()> {
                 }
             }
             Response::Tracker(Err(e)) => {
-                panic!("tracker failed with error: {:?}", e); // TODO: handle this more gracefully
+                error!("tracker failed with error: {:?}", e);
             }
             Response::Timer(data) if { data.id == tracker_timer_id } => {
                 // send periodic tracker request
@@ -453,22 +494,31 @@ fn main() -> Result<()> {
             }
         }
 
-        // Am I done?
-        if state.file.is_complete() && !ARGS.seed {
+        if state.file.is_complete() && (!ARGS.seed && !ARGS.seed_existing) {
             info!("File download complete!");
 
-            // dump stats to file
-            let f = std::fs::File::create("./statistics.txt")?;
-            let mut writer = std::io::BufWriter::new(&f);
-            write!(&mut writer, "{:#?}", state.peers)?;
+            // Tell the tracker we're done
+            let msg = TrackerRequest {
+                url: METAINFO.announce.clone(),
+                request: request::Request {
+                    info_hash: METAINFO.info_hash(),
+                    peer_id: *PEER_ID,
+                    my_port: ARGS.port,
+                    uploaded: state.uploaded(),
+                    downloaded: state.downloaded(),
+                    left: 0,
+                    event: Some(request::Event::Completed),
+                },
+            };
+            tracker_sender
+                .send(msg)
+                .expect("Failed to send request to tracker thread");
 
-            process::exit(0); // TODO: tell the tracker we're done
+            process::exit(0);
         }
 
-        // TODO: move this into a helper function
         // after handling event, refill pipelines
         let requests = strategy::pick_blocks(&state);
-        //println!("SHOULD MAKE REQUESTS FOR: {:#?}", stuff);
         for (block, addr) in requests {
             let Some(peer_info) = state.peers.get(&addr) else {
                 continue;
@@ -480,8 +530,6 @@ fn main() -> Result<()> {
                 block.range.start as u32,
                 (block.range.end - block.range.start) as u32,
             ));
-            //trace!("Requested block {:?} from peer {:?}", block, addr);
-            //println!("Peer {:?}: sent Request: {:?}", addr, msg);
             if peer_info.sender.send(msg).is_err() {
                 warn!(
                     "Main: peer {:?} appears to have died. Removing from peer context map...",
@@ -493,11 +541,10 @@ fn main() -> Result<()> {
             // Associate a timer with the request
             let id: u64 = rand::thread_rng().gen();
             let timer_req = TimerRequest::Timer(TimerInfo {
-                timer_len: REQUEST_TIMEOUT,
+                timer_len: Duration::from_secs(ARGS.request_timeout),
                 id,
                 repeat: false,
             });
-            // TODO: i think timer is broken and sometimes sends repeat even when we didnt ask.
             state
                 .timer_sender
                 .send(timer_req)

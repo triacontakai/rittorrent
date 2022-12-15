@@ -1,17 +1,11 @@
 use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
-use bendy::{serde::from_bytes, value::Value};
-use clap::{Parser, ValueEnum};
+use bendy::serde::from_bytes;
+use clap::Parser;
 use lazy_static::lazy_static;
 use rand::{Rng, RngCore};
 
 use crate::torrent::{Info, MetaInfo};
-
-#[derive(ValueEnum, Clone, Debug)]
-pub enum TrackerType {
-    Http,
-    Udp,
-}
 
 /// A moderately functional BitTorrent client written in Rust
 #[derive(Parser, Debug)]
@@ -29,13 +23,29 @@ pub struct Args {
     #[arg(short, long, default_value_t = rand::thread_rng().gen_range(1025..65535))]
     pub port: u16,
 
-    /// Force a specific tracker protocol to be used
-    #[arg(short = 'r', long)]
-    pub tracker_type: TrackerType,
-
     /// Continue seeding after file has been downloaded
     #[arg(short, long, default_value_t = false)]
     pub seed: bool,
+
+    /// Seed a pre-existing file, rather than downloading the file and seeding it.
+    #[arg(short = 'e', long, default_value_t = false)]
+    pub seed_existing: bool,
+
+    /// Number of outstanding requests to have per-peer
+    #[arg(short, long, default_value_t = 10)]
+    pub pipeline_depth: usize,
+
+    /// Number of seconds to wait before dropping peer
+    #[arg(short, long, default_value_t = 12)]
+    pub request_timeout: u64,
+
+    /// Skip getting peers from tracker, only accepting new manual connections
+    #[arg(short = 'a', long, default_value_t = false)]
+    pub skip_announce: bool,
+
+    /// Add a single peer manually at the download's start
+    #[arg(short = 'o', long)]
+    pub add_peer: Option<String>,
 }
 
 const PEER_ID_LEN: usize = 20;

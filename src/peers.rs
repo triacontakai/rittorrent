@@ -209,12 +209,8 @@ fn do_handshake(
     let mut buf = [0u8; HEADER_LEN];
     reader.read_exact(&mut buf)?;
 
-    // TODO: some sanity checking, possibly?
-
     Ok(())
 }
-
-// GIANT TODO: handle thread deaths!
 
 pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<PeerRequest> {
     let (tx, rx) = channel::unbounded();
@@ -225,19 +221,18 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
         peer.set_read_timeout(Some(TCP_READ_TIMEOUT))
             .expect("Failed to set read timeout on TcpStream");
 
-        let mut writer = BufWriter::new(peer.try_clone().expect("Failed to clone TcpStream")); // TODO: what if this fails? should tell main thread!
+        let mut writer = BufWriter::new(peer.try_clone().expect("Failed to clone TcpStream"));
         let mut reader = BufReader::new(peer.try_clone().expect("Failed to clone TcpStream"));
 
         // do the handshake
-        if do_handshake(&mut reader, &mut writer).is_err() {
-            eprintln!("Failed to perform handshake!");
+        if let Err(e) = do_handshake(&mut reader, &mut writer) {
+            eprintln!("Failed to perform handshake: {:?}", e);
             return;
         }
 
         // create receiving thread
         let (s, r) = channel::unbounded();
         thread::spawn(move || loop {
-            // TODO: send heartbeat messages
             match Message::recv(&mut reader) {
                 Ok(msg) => {
                     // send message back to main thread
@@ -294,7 +289,6 @@ pub fn spawn_peer_thread(peer: TcpStream, sender: Sender<Response>) -> Sender<Pe
                     }
                 }
                 i if i == recv_thread_oper => {
-                    // TODO: for now, we only forward Message responses. Should we forward heartbeats/deaths?
                     let Ok(resp) = oper.recv(&r) else {
                         eprintln!("Peer thread failed to read from receiver thread channel");
                         return;

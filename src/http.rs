@@ -59,7 +59,7 @@ pub fn http_get(url: &str, parameters: &[(&str, &[u8])]) -> Result<Response> {
     // Send the HTTP request headers
     let mut request_headers = HashMap::new();
     if let Some(host) = parsed_url.host() {
-        request_headers.insert(String::from("Host"), host.to_string()); // TODO: this may have to include port
+        request_headers.insert(String::from("Host"), host.to_string());
     } else {
         return Err(anyhow!("http_get: url has no host!"));
     }

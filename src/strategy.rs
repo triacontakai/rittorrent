@@ -3,43 +3,11 @@ use std::{collections::HashMap, net::SocketAddr};
 use rand::seq::SliceRandom;
 
 use crate::{
+    args::ARGS,
     file::{self, BlockInfo},
     MainState,
 };
 
-// TODO: this should be a cmdline argument
-const PIPELINE_DEPTH: usize = 10;
-
-//pub trait BlockStrategy {
-//    fn pick_blocks(state: MainState) -> Vec<(file::BlockInfo, SocketAddr)>;
-//}
-//
-//pub struct RarestFirst;
-//
-//impl RarestFirst {
-//    pub fn new() -> Self { Self {} }
-//}
-//
-//impl BlockStrategy for RarestFirst {
-//}
-
-// TODO: wrap this in a trait maybe?
-//pub fn pick_blocks(state: &MainState) -> Vec<(file::BlockInfo, SocketAddr)> {
-//    let ret = Vec::new();
-//
-//    // random order
-//    let mut addrs: Vec<SocketAddr> = state.peers.keys().map(|x| *x).collect();
-//    addrs.shuffle(&mut rand::thread_rng());
-//
-//    let mut iter = addrs.iter();
-//    while let Some(addr) = iter.next() {
-//        println!("Processing peer {:?}", addr);
-//    }
-//
-//    ret
-//}
-
-// for now pick randomly lol.
 pub fn pick_blocks(state: &MainState) -> Vec<(file::BlockInfo, SocketAddr)> {
     let mut ret = Vec::new();
 
@@ -74,7 +42,7 @@ pub fn pick_blocks(state: &MainState) -> Vec<(file::BlockInfo, SocketAddr)> {
 
             for range in ranges {
                 // if we have reached pipeline depth, stop making requests
-                if count >= PIPELINE_DEPTH {
+                if count >= ARGS.pipeline_depth {
                     break 'outer;
                 }
 
