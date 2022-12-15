@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam::channel::{self, Sender};
-use log::{warn, info};
+use log::{info, warn};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_millis(500);
 

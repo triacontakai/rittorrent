@@ -42,7 +42,7 @@ pub struct DownloadFile {
     bitfield: BitVec<u8, Msb0>,
     file: File,
     downloaded: usize,
-    total_size: usize
+    total_size: usize,
 }
 
 impl Block {
@@ -102,6 +102,27 @@ impl DownloadFile {
         Self::new_from_file(file, hashes, piece_size, total_size)
     }
 
+    pub fn new_seeding(
+        file_name: impl AsRef<Path>,
+        hashes: &[[u8; DIGEST_SIZE]],
+        piece_size: usize,
+        total_size: usize,
+    ) -> Result<Self> {
+        let mut download_file = Self::new(file_name, hashes, piece_size, total_size)?;
+        download_file.downloaded = download_file.total_size;
+
+        for mut bit in download_file.bitfield.iter_mut() {
+            *bit = true;
+        }
+
+        // loop through each piece and empty unfilled, since we have entire file
+        for piece in download_file.pieces.iter_mut() {
+            piece.unfilled.clear();
+        }
+
+        Ok(download_file)
+    }
+
     fn new_from_file(
         file: File,
         hashes: &[[u8; DIGEST_SIZE]],
@@ -147,7 +168,7 @@ impl DownloadFile {
             bitfield: bitvec![u8, Msb0; 0; num_pieces],
             file,
             downloaded: 0,
-            total_size
+            total_size,
         })
     }
 
@@ -177,11 +198,13 @@ impl DownloadFile {
 
         Ok(piece.is_complete())
     }
-    
+
     /// Returns number of bytes left to download.
     /// This has a resolution of piece sizes, and only goes down when we get a full valid piece.
     pub fn left(&self) -> usize {
-        self.total_size.checked_sub(self.downloaded).expect("violated invariant total_size >= downloaded")
+        self.total_size
+            .checked_sub(self.downloaded)
+            .expect("violated invariant total_size >= downloaded")
     }
 
     /// Returns the bytes matching the given [BlockInfo]
@@ -274,7 +297,7 @@ mod tests {
 
     use crate::file::{BlockInfo, BLOCK_SIZE};
 
-    use super::{get_block_ranges, Block, DownloadFile};
+    use super::{get_block_ranges, Block, DownloadFile, DIGEST_SIZE};
 
     #[test]
     fn get_block_ranges_test() {
@@ -469,5 +492,17 @@ mod tests {
             })
             .unwrap();
         assert_eq!(buf, data);
+    }
+
+    #[test]
+    fn new_seeding_invariants() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let hashes = &[[0u8; DIGEST_SIZE]; 4];
+        let file =
+            DownloadFile::new_seeding(temp_file.path(), hashes, BLOCK_SIZE * 4, BLOCK_SIZE * 16)
+                .unwrap();
+
+        assert!(file.is_complete());
+        assert_eq!(file.bitfield(), &[0b11110000]);
     }
 }
