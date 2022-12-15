@@ -74,13 +74,22 @@ pub fn http_get(url: &str, parameters: &[(&str, &[u8])]) -> Result<Response> {
     // Receive the HTTP response headers
     let mut response_headers = HashMap::new();
     let mut status_code: Option<u32> = None;
+    let mut response_length: Option<usize> = None;
 
-    let re: Regex = Regex::new(r"^HTTP/1.1 (\d{3})")?;
+    let re_1_1: Regex = Regex::new(r"^HTTP/1.1 (\d{3})")?;
+    let re_1_0: Regex = Regex::new(r"^HTTP/1.0 (\d{3})")?;
     for line in reader.by_ref().lines() {
         let line = line?;
 
-        // Look for line with status code
-        if let Some(captures) = re.captures(&line) {
+        // Look for line with status code (HTTP 1.1)
+        if let Some(captures) = re_1_1.captures(&line) {
+            if let Some(status) = captures.get(1) {
+                status_code = Some(status.as_str().parse()?);
+            }
+        }
+
+        // Look for line with status code (HTTP 1.0)
+        if let Some(captures) = re_1_0.captures(&line) {
             if let Some(status) = captures.get(1) {
                 status_code = Some(status.as_str().parse()?);
             }
@@ -103,18 +112,33 @@ pub fn http_get(url: &str, parameters: &[(&str, &[u8])]) -> Result<Response> {
         }
     }
 
+    if let Some(len) = response_headers.get("Content-Length") {
+        response_length = Some(len.parse()?);
+    }
+
     // Receive the rest of the response and return
-    if let (Some(status), Some(len)) = (status_code, response_headers.get("Content-Length")) {
-        let len: usize = len.parse()?;
-        let mut buf = vec![0u8; len];
+    if let Some(status) = status_code {
+        if let Some(len) = response_length {
+            let mut buf = vec![0u8; len];
 
-        reader.read_exact(&mut buf)?;
+            reader.read_exact(&mut buf)?;
 
-        Ok(Response {
-            status: status,
-            content: buf,
-            headers: response_headers,
-        })
+            Ok(Response {
+                status: status,
+                content: buf,
+                headers: response_headers,
+            })
+        } else {
+            let mut buf = Vec::new();
+
+            reader.read_to_end(&mut buf)?;
+
+            Ok(Response {
+                status,
+                content: buf,
+                headers: response_headers,
+            })
+        }
     } else if !response_headers.contains_key("Content-Length") {
         Err(anyhow!(
             "http_get: Did not receive Content-Length in HTTP response!"
