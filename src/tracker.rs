@@ -23,6 +23,7 @@ pub mod response {
     use std::net::Ipv4Addr;
 
     use bendy::value::Value;
+    use log::error;
     use serde::Deserializer;
     use serde::{Deserialize, Serialize};
 
@@ -74,11 +75,15 @@ pub mod response {
                     };
 
                     let Some(Value::Bytes(ip)) = map.get(&Cow::Borrowed(&b"ip"[..])) else {
-                        return Err(serde::de::Error::custom("peers list entry does not contain key 'ip'"))
+                        //return Err(serde::de::Error::custom("peers list entry does not contain key 'ip'"))
+                        error!("peers list entry does not contain key 'ip'");
+                        continue;
                     };
 
                     let Some(&Value::Integer(port)) = map.get(&Cow::Borrowed(&b"port"[..])) else {
-                        return Err(serde::de::Error::custom("peers list entry does not contain key 'port'"))
+                        //return Err(serde::de::Error::custom("peers list entry does not contain key 'port'"))
+                        error!("peers list entry does not contain key 'port'");
+                        continue;
                     };
 
                     let ip = ip.clone();
