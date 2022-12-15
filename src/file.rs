@@ -41,6 +41,8 @@ pub struct DownloadFile {
     pieces: Vec<Piece>,
     bitfield: BitVec<u8, Msb0>,
     file: File,
+    downloaded: usize,
+    total_size: usize
 }
 
 impl Block {
@@ -144,6 +146,8 @@ impl DownloadFile {
             pieces,
             bitfield: bitvec![u8, Msb0; 0; num_pieces],
             file,
+            downloaded: 0,
+            total_size
         })
     }
 
@@ -172,6 +176,12 @@ impl DownloadFile {
         };
 
         Ok(piece.is_complete())
+    }
+    
+    /// Returns number of bytes left to download.
+    /// This has a resolution of piece sizes, and only goes down when we get a full valid piece.
+    pub fn left(&self) -> usize {
+        self.total_size.checked_sub(self.downloaded).expect("violated invariant total_size >= downloaded")
     }
 
     /// Returns the bytes matching the given [BlockInfo]
@@ -243,6 +253,7 @@ impl DownloadFile {
             let hash = hasher.finalize();
             if hash == piece.hash.into() {
                 *self.bitfield.get_mut(block.piece).unwrap() = true;
+                self.downloaded += piece.length;
                 Ok(())
             } else {
                 piece.unfilled = piece.all_blocks.clone();
@@ -296,6 +307,7 @@ mod tests {
 
         file.file.read_to_end(&mut buf).unwrap();
         assert_eq!(buf, data);
+        assert_eq!(file.left(), 0);
     }
 
     #[test]
